@@ -38,6 +38,24 @@ func TestClientFetchReturnsUsageWindows(t *testing.T) {
 	}
 }
 
+func TestClientAlwaysAppendsUsagePathToProvidedBaseURL(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/custom/v1/v1/usage" {
+			t.Fatalf("path = %q, want /custom/v1/v1/usage", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"usage":{"rolling":{"status":"ok","percent":1,"resetsAt":"2026-08-16T19:50:55Z"},"weekly":{"status":"ok","percent":2,"resetsAt":"2026-08-17T00:00:00Z"},"monthly":{"status":"ok","percent":3,"resetsAt":"2026-09-13T21:51:50Z"}}}`))
+	}))
+	defer server.Close()
+
+	client := Client{BaseURL: server.URL + "/custom/v1", HTTPClient: server.Client()}
+	if _, err := client.Fetch(context.Background(), "secret-key"); err != nil {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+}
+
 func TestClientFetchMapsUnauthorizedWithoutCallingItExhausted(t *testing.T) {
 	t.Parallel()
 

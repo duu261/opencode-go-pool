@@ -85,6 +85,107 @@ openai-compatibility:
 	}
 }
 
+func TestDiscoverFindsDirectOpenCodeCompatibleV1BaseURL(t *testing.T) {
+	t.Parallel()
+
+	path := writeConfig(t, `
+openai-compatibility:
+  - name: opencode-compatible
+    base-url: https://opencode.ai/zen/go/v1
+    api-key-entries:
+      - api-key: compatible-key
+`)
+
+	credentials, err := Discover(path, nil)
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if len(credentials) != 1 || credentials[0].BaseURL != "https://opencode.ai/zen/go" {
+		t.Fatalf("compatible provider was not discovered: %#v", credentials)
+	}
+}
+
+func TestDiscoverPreservesExplicitCustomV1BaseURL(t *testing.T) {
+	t.Parallel()
+
+	path := writeConfig(t, `
+openai-compatibility:
+  - name: custom-explicit
+    base-url: http://127.0.0.1:18444/custom/v1
+    api-key-entries:
+      - api-key: explicit-key
+`)
+
+	credentials, err := Discover(path, []string{"custom-explicit"})
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if len(credentials) != 1 || credentials[0].BaseURL != "http://127.0.0.1:18444/custom/v1" {
+		t.Fatalf("explicit provider base URL changed: %#v", credentials)
+	}
+}
+
+func TestDiscoverRejectsQueryOrFragmentOnAutomaticDirectProvider(t *testing.T) {
+	t.Parallel()
+
+	for _, baseURL := range []string{
+		"https://opencode.ai/zen/go/v1?",
+		"https://opencode.ai/zen/go/v1?project=wrong",
+		"https://opencode.ai/zen/go/v1#fragment",
+	} {
+		t.Run(baseURL, func(t *testing.T) {
+			path := writeConfig(t, "openai-compatibility:\n  - name: unsafe-direct\n    base-url: \""+baseURL+"\"\n    api-key-entries:\n      - api-key: must-not-be-used\n")
+			credentials, err := Discover(path, nil)
+			if err != nil {
+				t.Fatalf("Discover() error = %v", err)
+			}
+			if len(credentials) != 0 {
+				t.Fatalf("unsafe direct URL was accepted: %#v", credentials)
+			}
+		})
+	}
+}
+
+func TestDiscoverRejectsPlainHTTPDirectV1Provider(t *testing.T) {
+	t.Parallel()
+
+	path := writeConfig(t, `
+openai-compatibility:
+  - name: unsafe-direct-v1
+    base-url: http://opencode.ai/zen/go/v1
+    api-key-entries:
+      - api-key: must-not-leave-over-http
+`)
+
+	credentials, err := Discover(path, nil)
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if len(credentials) != 0 {
+		t.Fatalf("plain HTTP direct v1 provider was accepted: %#v", credentials)
+	}
+}
+
+func TestDiscoverRejectsAnyExplicitPortOnAutomaticDirectProvider(t *testing.T) {
+	t.Parallel()
+
+	for _, baseURL := range []string{
+		"https://opencode.ai:/zen/go/v1",
+		"https://opencode.ai:443/zen/go/v1",
+	} {
+		t.Run(baseURL, func(t *testing.T) {
+			path := writeConfig(t, "openai-compatibility:\n  - name: unsafe-port\n    base-url: \""+baseURL+"\"\n    api-key-entries:\n      - api-key: must-not-be-used\n")
+			credentials, err := Discover(path, nil)
+			if err != nil {
+				t.Fatalf("Discover() error = %v", err)
+			}
+			if len(credentials) != 0 {
+				t.Fatalf("explicit-port direct URL was accepted: %#v", credentials)
+			}
+		})
+	}
+}
+
 func TestDiscoverDeduplicatesRepeatedKeys(t *testing.T) {
 	t.Parallel()
 

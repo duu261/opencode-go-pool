@@ -35,13 +35,13 @@ func (c Client) Fetch(ctx context.Context, apiKey string) (Usage, error) {
 		return Usage{}, errors.New("API key is required")
 	}
 
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.BaseURL, "/")+"/v1/usage", nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")+"/v1/usage", nil)
 	if err != nil {
 		return Usage{}, fmt.Errorf("create usage request: %w", err)
 	}
 	request.Header.Set("Authorization", "Bearer "+apiKey)
 	request.Header.Set("Accept", "application/json")
-	request.Header.Set("User-Agent", "opencode-go-quota/0.1.0")
+	request.Header.Set("User-Agent", "opencode-go-quota")
 
 	httpClient := c.HTTPClient
 	if httpClient == nil {

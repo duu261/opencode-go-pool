@@ -180,7 +180,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 			SchemaVersion: 1,
 			Metadata: metadata{
 				Name:             pluginName,
-				Version:          "0.2.0",
+				Version:          "0.2.1",
 				Author:           "Duu",
 				GitHubRepository: "https://github.com/duu261/opencode-go-quota",
 				ConfigFields: []configField{

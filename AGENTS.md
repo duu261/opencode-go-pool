@@ -45,9 +45,9 @@ nm -D dist/opencode-go-quota.so | grep -E 'cliproxy_plugin_init|cliproxyPluginCa
 - Preserve CLIProxyAPI JSON field casing such as `Name`, `StatusCode`, `Headers`, and `Body`.
 - The Management Center resource path is `/status`, exposed by CLIProxyAPI at `/v0/resource/plugins/opencode-go-quota/status`.
 - Quota JSON is authenticated at `/v0/management/plugins/opencode-go-quota/quotas`.
-- OpenCode usage is `GET <base-url>/v1/usage` with `Authorization: Bearer <key>`.
+- OpenCode usage is `/zen/go/v1/usage`; avoid duplicating `/v1` when the compatible base URL already ends in `/v1`.
 - HTTP 401 means usage unavailable. Never classify it as exhausted quota.
-- Direct providers require HTTPS, standard port, host `opencode.ai`, and path `/zen/go`; custom URLs require an explicit `provider_names` entry.
+- Direct providers require HTTPS, standard port, host `opencode.ai`, and path `/zen/go` or `/zen/go/v1`; custom URLs require an explicit `provider_names` entry.
 
 ## Scope boundaries
 

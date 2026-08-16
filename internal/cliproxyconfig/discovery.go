@@ -61,7 +61,8 @@ func Discover(configPath string, providerNames []string) ([]Credential, error) {
 	credentials := make([]Credential, 0)
 	seen := make(map[string]int)
 	for _, provider := range config.OpenAICompatibility {
-		if !isOpenCodeProvider(provider, allowedNames) {
+		usageBaseURL, ok := providerUsageBaseURL(provider, allowedNames)
+		if !ok {
 			continue
 		}
 		for _, entry := range provider.APIKeyEntries {
@@ -77,7 +78,7 @@ func Discover(configPath string, providerNames []string) ([]Credential, error) {
 			seen[apiKey] = len(credentials)
 			credentials = append(credentials, Credential{
 				ProviderName: strings.TrimSpace(provider.Name),
-				BaseURL:      strings.TrimSpace(provider.BaseURL),
+				BaseURL:      usageBaseURL,
 				KeyID:        fingerprint(apiKey),
 				APIKey:       apiKey,
 				Enabled:      enabled,
@@ -87,15 +88,26 @@ func Discover(configPath string, providerNames []string) ([]Credential, error) {
 	return credentials, nil
 }
 
-func isOpenCodeProvider(provider compatProvider, allowedNames map[string]struct{}) bool {
+func providerUsageBaseURL(provider compatProvider, allowedNames map[string]struct{}) (string, bool) {
+	baseURL := strings.TrimSpace(provider.BaseURL)
 	if _, ok := allowedNames[strings.ToLower(strings.TrimSpace(provider.Name))]; ok {
-		return true
+		return baseURL, true
 	}
-	u, err := url.Parse(strings.TrimSpace(provider.BaseURL))
-	if err != nil || !strings.EqualFold(u.Scheme, "https") || !strings.EqualFold(u.Hostname(), "opencode.ai") || u.Port() != "" {
-		return false
+	u, err := url.Parse(baseURL)
+	if err != nil || !strings.EqualFold(u.Scheme, "https") || !strings.EqualFold(u.Host, "opencode.ai") || u.User != nil || u.ForceQuery || u.RawQuery != "" || u.Fragment != "" {
+		return "", false
 	}
-	return path.Clean("/"+strings.TrimSpace(u.Path)) == "/zen/go"
+	providerPath := path.Clean("/" + strings.TrimSpace(u.Path))
+	switch providerPath {
+	case "/zen/go":
+		return baseURL, true
+	case "/zen/go/v1":
+		u.Path = strings.TrimSuffix(strings.TrimRight(u.Path, "/"), "/v1")
+		u.RawPath = ""
+		return u.String(), true
+	default:
+		return "", false
+	}
 }
 
 func fingerprint(apiKey string) string {

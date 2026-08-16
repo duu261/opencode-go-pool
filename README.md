@@ -5,8 +5,8 @@ Read-only bulk quota plugin for CLIProxyAPI. It targets the standard dynamic-lib
 ## What it does
 
 - Reads OpenAI-compatible credentials from CLIProxyAPI's protected config file.
-- Auto-detects only direct `https://opencode.ai/zen/go` providers on the standard HTTPS port.
-- Queries every enabled key through `GET <base-url>/v1/usage` with bounded concurrency.
+- Auto-detects direct `https://opencode.ai/zen/go` and CLIProxy-compatible `https://opencode.ai/zen/go/v1` providers on the standard HTTPS port.
+- Resolves the OpenCode `/v1/usage` endpoint without duplicating a configured `/v1` suffix, then queries enabled keys with bounded concurrency.
 - Shows masked key fingerprints, status, 5h/weekly/monthly usage, and all reset times.
 - Marks HTTP 401 as `unavailable`, never as exhausted quota.
 - Shows weight-disabled credentials without querying them.
@@ -44,7 +44,7 @@ plugins:
       timeout_seconds: 15
 ```
 
-Direct OpenCode Go providers need no name configuration. Plain HTTP is never auto-detected. For an intentional local canary, private proxy, or alternate compatible URL, explicitly allow the CLIProxy provider name:
+Direct OpenCode Go providers need no name configuration. Both base URL forms avoid duplicating `/v1` when querying usage. Plain HTTP is never auto-detected. For an intentional local canary, private proxy, or alternate compatible URL, explicitly allow the CLIProxy provider name:
 
 ```yaml
       provider_names:
