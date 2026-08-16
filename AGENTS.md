@@ -4,17 +4,21 @@ Go shared-library plugin for CLIProxyAPI. It provides a read-only Management Cen
 
 ## Layout
 
-- `main.go`: C ABI exports, plugin registration, and Management API resource.
+- `main.go`: C ABI exports, plugin registration, and authenticated quota route.
+- `plugin_config.go`: validated plugin YAML and runtime config state.
+- `page.go`: static Management Center shell; it must never embed quota data.
 - `plugin_test.go`: ABI registration and management-page behavior.
+- `internal/cliproxyconfig/`: protected CLIProxy config credential discovery.
 - `internal/opencode/usage.go`: OpenCode `GET <base-url>/v1/usage` client.
 - `internal/opencode/usage_test.go`: real HTTP behavior via `httptest`.
+- `internal/pool/`: bounded bulk collection and safe result projection.
 - `dist/`: generated `.so` and C header; ignored by Git.
 
 ## Toolchain
 
 - Go 1.24 or newer.
 - CGO and a C compiler are required for the shared-library build.
-- The module intentionally uses only the Go standard library.
+- YAML parsing uses the exact-pinned `gopkg.in/yaml.v3` dependency.
 
 ## Commands
 
@@ -40,18 +44,21 @@ nm -D dist/opencode-go-quota.so | grep -E 'cliproxy_plugin_init|cliproxyPluginCa
 - Preserve the exported C symbols and ABI version `1` in `main.go`.
 - Preserve CLIProxyAPI JSON field casing such as `Name`, `StatusCode`, `Headers`, and `Body`.
 - The Management Center resource path is `/status`, exposed by CLIProxyAPI at `/v0/resource/plugins/opencode-go-quota/status`.
+- Quota JSON is authenticated at `/v0/management/plugins/opencode-go-quota/quotas`.
 - OpenCode usage is `GET <base-url>/v1/usage` with `Authorization: Bearer <key>`.
 - HTTP 401 means usage unavailable. Never classify it as exhausted quota.
+- Direct providers require HTTPS, standard port, host `opencode.ai`, and path `/zen/go`; custom URLs require an explicit `provider_names` entry.
 
 ## Scope boundaries
 
 - Read-only plugin. No routing mutation or automatic credential disabling until separately approved and canary-tested.
 - No cookies, browser login, database, or New API access.
 - Never render, log, persist, or return raw API keys to the browser.
-- Credential discovery is not implemented yet; the current page must say so plainly.
 
 ## Pitfalls
 
 - `-buildmode=c-shared` produces both `.so` and `.h`; both belong under ignored `dist/`.
 - Plugin code runs in-process with CLIProxyAPI. A panic, exit, memory corruption, or leaked secret affects the proxy itself.
+- CLIProxyAPI v7.2.130 resource routes are unauthenticated. Keep `/status` data-free; fetch quota only from the authenticated Management API route.
+- `host.auth.list` and `host.auth.get_runtime` omit runtime API keys; `host.auth.get` requires a physical auth file. OpenAI-compatible key discovery therefore reads the protected CLIProxy config path.
 - Do not edit `/home/duu/.hermes/hermes-agent/` for this plugin. CLIProxyAPI compatibility belongs in this repository.

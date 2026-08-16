@@ -37,15 +37,25 @@ extern void cliproxyPluginShutdown(void);
 import "C"
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 	"unsafe"
+
+	"github.com/duu261/opencode-go-quota/internal/cliproxyconfig"
+	"github.com/duu261/opencode-go-quota/internal/pool"
 )
 
 const (
 	abiVersion = 1
 	pluginID   = "opencode-go-quota"
 	pluginName = "OpenCode Go Quota"
+
+	resourcePath       = "/status"
+	fullResourcePath   = "/v0/resource/plugins/" + pluginID + resourcePath
+	quotaRoutePath     = "/plugins/" + pluginID + "/quotas"
+	fullQuotaRoutePath = "/v0/management" + quotaRoutePath
 )
 
 type envelope struct {
@@ -66,11 +76,17 @@ type registration struct {
 }
 
 type metadata struct {
-	Name             string `json:"Name"`
-	Version          string `json:"Version"`
-	Author           string `json:"Author"`
-	GitHubRepository string `json:"GitHubRepository"`
-	ConfigFields     []any  `json:"ConfigFields"`
+	Name             string        `json:"Name"`
+	Version          string        `json:"Version"`
+	Author           string        `json:"Author"`
+	GitHubRepository string        `json:"GitHubRepository"`
+	ConfigFields     []configField `json:"ConfigFields"`
+}
+
+type configField struct {
+	Name        string `json:"Name"`
+	Type        string `json:"Type"`
+	Description string `json:"Description"`
 }
 
 type registrationCapabilities struct {
@@ -78,7 +94,14 @@ type registrationCapabilities struct {
 }
 
 type managementRegistration struct {
+	Routes    []managementRoute    `json:"routes,omitempty"`
 	Resources []managementResource `json:"resources"`
+}
+
+type managementRoute struct {
+	Method      string `json:"Method"`
+	Path        string `json:"Path"`
+	Description string `json:"Description"`
 }
 
 type managementResource struct {
@@ -150,23 +173,38 @@ func cliproxyPluginShutdown() {}
 func handleMethod(method string, request []byte) ([]byte, error) {
 	switch method {
 	case "plugin.register", "plugin.reconfigure":
+		if err := configurePlugin(request); err != nil {
+			return nil, err
+		}
 		return okEnvelope(registration{
 			SchemaVersion: 1,
 			Metadata: metadata{
 				Name:             pluginName,
-				Version:          "0.1.0",
+				Version:          "0.2.0",
 				Author:           "Duu",
 				GitHubRepository: "https://github.com/duu261/opencode-go-quota",
-				ConfigFields:     []any{},
+				ConfigFields: []configField{
+					{Name: "config_path", Type: "string", Description: "Protected CLIProxyAPI config file path."},
+					{Name: "provider_names", Type: "array", Description: "Additional OpenAI-compatible provider names to include."},
+					{Name: "max_concurrency", Type: "integer", Description: "Concurrent quota requests, 1-16."},
+					{Name: "timeout_seconds", Type: "integer", Description: "Whole-report timeout, 1-60 seconds."},
+				},
 			},
 			Capabilities: registrationCapabilities{ManagementAPI: true},
 		})
 	case "management.register":
-		return okEnvelope(managementRegistration{Resources: []managementResource{{
-			Path:        "/status",
-			Menu:        pluginName,
-			Description: "Read-only OpenCode Go quota pool status.",
-		}}})
+		return okEnvelope(managementRegistration{
+			Routes: []managementRoute{{
+				Method:      http.MethodGet,
+				Path:        quotaRoutePath,
+				Description: "Authenticated OpenCode Go quota pool data.",
+			}},
+			Resources: []managementResource{{
+				Path:        resourcePath,
+				Menu:        pluginName,
+				Description: "Read-only OpenCode Go quota pool status.",
+			}},
+		})
 	case "management.handle":
 		return handleManagement(request)
 	default:
@@ -181,19 +219,67 @@ func handleManagement(raw []byte) ([]byte, error) {
 			return nil, err
 		}
 	}
-	fullResourcePath := "/v0/resource/plugins/" + pluginID + "/status"
-	if request.Path != "" && request.Path != "/status" && request.Path != fullResourcePath {
+	switch request.Path {
+	case fullQuotaRoutePath, quotaRoutePath:
+		return handleQuotaManagement()
+	case "", resourcePath, fullResourcePath:
+		return okEnvelope(htmlResponse(http.StatusOK, quotaPageHTML))
+	default:
 		return okEnvelope(htmlResponse(http.StatusNotFound, "<h1>Not found</h1>"))
 	}
-	page := `<!doctype html><html><head><meta charset="utf-8"><title>OpenCode Go Quota</title></head><body><main><h1>OpenCode Go Quota</h1><p>Read-only quota monitor scaffold.</p><p>Credential discovery is not wired yet.</p></main></body></html>`
-	return okEnvelope(htmlResponse(http.StatusOK, page))
+}
+
+type quotaSnapshot struct {
+	GeneratedAt time.Time     `json:"generated_at"`
+	Results     []pool.Result `json:"results"`
+}
+
+func handleQuotaManagement() ([]byte, error) {
+	config := currentPluginConfig()
+	credentials, err := cliproxyconfig.Discover(config.ConfigPath, config.ProviderNames)
+	if err != nil {
+		return okEnvelope(jsonResponse(http.StatusInternalServerError, map[string]string{
+			"error":   "credential_discovery_failed",
+			"message": "Unable to read CLIProxyAPI credential configuration.",
+		}))
+	}
+	timeout := time.Duration(config.TimeoutSeconds) * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	results := pool.Collect(ctx, credentials, &http.Client{Timeout: timeout}, config.MaxConcurrency)
+	return okEnvelope(jsonResponse(http.StatusOK, quotaSnapshot{
+		GeneratedAt: time.Now().UTC(),
+		Results:     results,
+	}))
 }
 
 func htmlResponse(status int, body string) managementResponse {
 	return managementResponse{
 		StatusCode: status,
-		Headers:    http.Header{"Content-Type": {"text/html; charset=utf-8"}},
-		Body:       []byte(body),
+		Headers: http.Header{
+			"Content-Type":            {"text/html; charset=utf-8"},
+			"Cache-Control":           {"no-store"},
+			"Content-Security-Policy": {"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'self'; form-action 'none'"},
+			"Referrer-Policy":         {"no-referrer"},
+			"X-Content-Type-Options":  {"nosniff"},
+		},
+		Body: []byte(body),
+	}
+}
+
+func jsonResponse(status int, value any) managementResponse {
+	body, err := json.Marshal(value)
+	if err != nil {
+		body = []byte(`{"error":"encode_failed"}`)
+		status = http.StatusInternalServerError
+	}
+	return managementResponse{
+		StatusCode: status,
+		Headers: http.Header{
+			"Content-Type":  {"application/json; charset=utf-8"},
+			"Cache-Control": {"no-store"},
+		},
+		Body: body,
 	}
 }
 

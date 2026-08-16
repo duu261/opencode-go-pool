@@ -1,28 +1,35 @@
 # OpenCode Go Quota
 
-Read-only quota plugin for CLIProxyAPI. It targets the standard dynamic-library ABI shipped in CLIProxyAPI v7.2.130 and exposes a Management Center resource at `/v0/resource/plugins/opencode-go-quota/status`.
+Read-only bulk quota plugin for CLIProxyAPI. It targets the standard dynamic-library ABI in CLIProxyAPI v7.2.130 and adds an OpenCode Go quota page to Management Center.
 
-## Current scaffold
+## What it does
 
-- Builds as a Linux `c-shared` plugin.
-- Registers the `management_api` capability and a read-only status page.
-- Includes a tested client for `GET <base-url>/v1/usage`.
-- Treats HTTP 401 as usage unavailable, never as quota exhaustion.
-- Does not yet discover CLIProxyAPI OpenAI-compatible credentials.
+- Reads OpenAI-compatible credentials from CLIProxyAPI's protected config file.
+- Auto-detects only direct `https://opencode.ai/zen/go` providers on the standard HTTPS port.
+- Queries every enabled key through `GET <base-url>/v1/usage` with bounded concurrency.
+- Shows masked key fingerprints, status, 5h/weekly/monthly usage, and all reset times.
+- Marks HTTP 401 as `unavailable`, never as exhausted quota.
+- Shows weight-disabled credentials without querying them.
+- Deduplicates repeated keys and never returns or logs raw keys.
 
 ## Requirements
 
 - Go 1.24 or newer.
-- A C compiler for `-buildmode=c-shared`.
+- CGO and a C compiler.
 - CLIProxyAPI v7.2.130 or a compatible plugin ABI v1 build.
 
 ## Verify
 
 ```bash
 make check
+go test -race ./...
 ```
 
-The plugin artifact is written to `dist/opencode-go-quota.so`. CLIProxyAPI discovers plugins from `plugins/<GOOS>/<GOARCH>` and `plugins`, with configuration keyed by the library basename:
+The artifact is `dist/opencode-go-quota.so`.
+
+## CLIProxyAPI configuration
+
+Mount the plugin artifact into CLIProxyAPI's plugin directory. The existing production config is already mounted read-only at `/CLIProxyAPI/config.yaml`, which is the plugin default.
 
 ```yaml
 plugins:
@@ -32,8 +39,25 @@ plugins:
     opencode-go-quota:
       enabled: true
       priority: 1
+      config_path: "/CLIProxyAPI/config.yaml"
+      max_concurrency: 4
+      timeout_seconds: 15
 ```
+
+Direct OpenCode Go providers need no name configuration. Plain HTTP is never auto-detected. For an intentional local canary, private proxy, or alternate compatible URL, explicitly allow the CLIProxy provider name:
+
+```yaml
+      provider_names:
+        - opencode-canary
+```
+
+## Routes and security
+
+- Page shell: `/v0/resource/plugins/opencode-go-quota/status`
+- Quota data: `/v0/management/plugins/opencode-go-quota/quotas`
+
+CLIProxyAPI v7.2.130 plugin resource routes are unauthenticated. Therefore the public page is only a static shell and contains no quota or credential data. The page asks for the management key and sends it once as a Bearer header to the authenticated quota endpoint. It does not place the key in a URL or browser storage.
 
 ## Scope
 
-Keep the plugin read-only until credential discovery and quota rendering are verified against a canary CLIProxyAPI instance. Do not add cookies, browser login, a database, New API access, routing mutation, or automatic credential disabling to the first release.
+Read-only only. No cookies, browser account login, database, New API access, routing mutation, or automatic credential disabling.
