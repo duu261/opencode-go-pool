@@ -39,23 +39,29 @@ import "C"
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"strings"
 	"time"
 	"unsafe"
 
+	"github.com/duu261/opencode-go-quota/internal/accounts"
 	"github.com/duu261/opencode-go-quota/internal/cliproxyconfig"
+	"github.com/duu261/opencode-go-quota/internal/opencode"
 	"github.com/duu261/opencode-go-quota/internal/pool"
 )
 
 const (
 	abiVersion = 1
 	pluginID   = "opencode-go-quota"
-	pluginName = "OpenCode Go Quota"
+	pluginName = "OpenCode Go Pool"
 
 	resourcePath       = "/status"
 	fullResourcePath   = "/v0/resource/plugins/" + pluginID + resourcePath
 	quotaRoutePath     = "/plugins/" + pluginID + "/quotas"
 	fullQuotaRoutePath = "/v0/management" + quotaRoutePath
+	accountsRoutePath  = "/plugins/" + pluginID + "/accounts"
+	fullAccountsPath   = "/v0/management" + accountsRoutePath
 )
 
 type envelope struct {
@@ -113,6 +119,8 @@ type managementResource struct {
 type managementRequest struct {
 	Method string
 	Path   string
+	Query  map[string][]string
+	Body   []byte
 }
 
 type managementResponse struct {
@@ -180,11 +188,12 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 			SchemaVersion: 1,
 			Metadata: metadata{
 				Name:             pluginName,
-				Version:          "0.2.1",
+				Version:          "0.3.0",
 				Author:           "Duu",
 				GitHubRepository: "https://github.com/duu261/opencode-go-quota",
 				ConfigFields: []configField{
 					{Name: "config_path", Type: "string", Description: "Protected CLIProxyAPI config file path."},
+					{Name: "accounts_path", Type: "string", Description: "Writable plaintext OpenCode account registry path."},
 					{Name: "provider_names", Type: "array", Description: "Additional OpenAI-compatible provider names to include."},
 					{Name: "max_concurrency", Type: "integer", Description: "Concurrent quota requests, 1-16."},
 					{Name: "timeout_seconds", Type: "integer", Description: "Whole-report timeout, 1-60 seconds."},
@@ -194,11 +203,11 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		})
 	case "management.register":
 		return okEnvelope(managementRegistration{
-			Routes: []managementRoute{{
-				Method:      http.MethodGet,
-				Path:        quotaRoutePath,
-				Description: "Authenticated OpenCode Go quota pool data.",
-			}},
+			Routes: []managementRoute{
+				{Method: http.MethodGet, Path: quotaRoutePath, Description: "Authenticated OpenCode Go quota pool data."},
+				{Method: http.MethodGet, Path: accountsRoutePath, Description: "Authenticated OpenCode Go account registry and quota data."},
+				{Method: http.MethodPut, Path: accountsRoutePath, Description: "Replace the OpenCode Go account registry."},
+			},
 			Resources: []managementResource{{
 				Path:        resourcePath,
 				Menu:        pluginName,
@@ -222,11 +231,230 @@ func handleManagement(raw []byte) ([]byte, error) {
 	switch request.Path {
 	case fullQuotaRoutePath, quotaRoutePath:
 		return handleQuotaManagement()
+	case fullAccountsPath, accountsRoutePath:
+		return handleAccountsManagement(request)
 	case "", resourcePath, fullResourcePath:
 		return okEnvelope(htmlResponse(http.StatusOK, quotaPageHTML))
 	default:
 		return okEnvelope(htmlResponse(http.StatusNotFound, "<h1>Not found</h1>"))
 	}
+}
+
+type accountView struct {
+	accounts.Account
+	KeyID       string          `json:"key_id"`
+	PoolEnabled bool            `json:"pool_enabled"`
+	Status      string          `json:"status"`
+	Message     string          `json:"message,omitempty"`
+	Usage       *opencode.Usage `json:"usage,omitempty"`
+}
+
+type accountSnapshot struct {
+	GeneratedAt time.Time                 `json:"generated_at"`
+	Revision    string                    `json:"revision"`
+	Providers   []cliproxyconfig.Provider `json:"providers"`
+	Accounts    []accountView             `json:"accounts"`
+}
+
+type accountRegistryRequest struct {
+	Revision string              `json:"revision"`
+	Accounts *[]accounts.Account `json:"accounts"`
+}
+
+func handleAccountsManagement(request managementRequest) ([]byte, error) {
+	config := currentPluginConfig()
+	switch request.Method {
+	case "", http.MethodGet:
+		return accountSnapshotResponse(config)
+	case http.MethodPut:
+		var payload accountRegistryRequest
+		if err := json.Unmarshal(request.Body, &payload); err != nil {
+			return okEnvelope(jsonResponse(http.StatusBadRequest, map[string]string{
+				"error": "invalid_accounts", "message": "Account registry body must contain an accounts array.",
+			}))
+		}
+		if payload.Accounts == nil {
+			return okEnvelope(jsonResponse(http.StatusBadRequest, map[string]string{
+				"error": "invalid_accounts", "message": "Account registry body must contain an accounts array.",
+			}))
+		}
+		if payload.Revision == "" {
+			return okEnvelope(jsonResponse(http.StatusBadRequest, map[string]string{
+				"error": "missing_revision", "message": "Account registry revision is required.",
+			}))
+		}
+		currentAccounts, currentRevision, err := accounts.LoadWithRevision(config.AccountsPath)
+		if err != nil {
+			return okEnvelope(jsonResponse(http.StatusInternalServerError, map[string]string{
+				"error": "account_registry_load_failed", "message": err.Error(),
+			}))
+		}
+		if payload.Revision != currentRevision {
+			return okEnvelope(jsonResponse(http.StatusConflict, map[string]string{
+				"error": "account_registry_conflict", "message": "Account registry changed in another tab. Refresh and retry.", "revision": currentRevision,
+			}))
+		}
+		providers, err := cliproxyconfig.DiscoverProviders(config.ConfigPath, config.ProviderNames)
+		if err != nil {
+			return okEnvelope(jsonResponse(http.StatusInternalServerError, map[string]string{
+				"error": "provider_discovery_failed", "message": "Unable to read CLIProxyAPI provider configuration.",
+			}))
+		}
+		eligibleProviders := make(map[string]struct{}, len(providers))
+		for _, provider := range providers {
+			eligibleProviders[strings.ToLower(provider.Name)] = struct{}{}
+		}
+		for _, account := range *payload.Accounts {
+			if _, eligible := eligibleProviders[strings.ToLower(strings.TrimSpace(account.ProviderName))]; !eligible {
+				return okEnvelope(jsonResponse(http.StatusUnprocessableEntity, map[string]string{
+					"error": "invalid_provider", "message": "Each account must use an eligible OpenCode provider.",
+				}))
+			}
+		}
+		nextByKey := make(map[string]accounts.Account, len(*payload.Accounts))
+		for _, account := range *payload.Accounts {
+			nextByKey[account.APIKey] = account
+		}
+		credentials, err := cliproxyconfig.Discover(config.ConfigPath, config.ProviderNames)
+		if err != nil {
+			return okEnvelope(jsonResponse(http.StatusInternalServerError, map[string]string{
+				"error": "credential_discovery_failed", "message": "Unable to read CLIProxyAPI credential configuration.",
+			}))
+		}
+		enabledKeys := make(map[string]struct{}, len(credentials))
+		for _, credential := range credentials {
+			if credential.Enabled {
+				enabledKeys[credential.APIKey] = struct{}{}
+			}
+		}
+		for _, account := range currentAccounts {
+			if next, kept := nextByKey[account.APIKey]; kept {
+				if !strings.EqualFold(account.ProviderName, next.ProviderName) {
+					return okEnvelope(jsonResponse(http.StatusConflict, map[string]string{
+						"error": "provider_reassignment", "message": "Account providers cannot be changed. Create a new parked account instead.",
+					}))
+				}
+				continue
+			}
+			if _, enabled := enabledKeys[account.APIKey]; enabled {
+				return okEnvelope(jsonResponse(http.StatusConflict, map[string]string{
+					"error": "active_account_delete", "message": "Disable active accounts before deleting them.",
+				}))
+			}
+		}
+		newRevision, err := accounts.Replace(config.AccountsPath, *payload.Accounts, payload.Revision)
+		if errors.Is(err, accounts.ErrRevisionConflict) {
+			return okEnvelope(jsonResponse(http.StatusConflict, map[string]string{
+				"error": "account_registry_conflict", "message": "Account registry changed in another tab. Refresh and retry.", "revision": newRevision,
+			}))
+		}
+		if err != nil {
+			return okEnvelope(jsonResponse(http.StatusUnprocessableEntity, map[string]string{
+				"error": "account_registry_save_failed", "message": err.Error(),
+			}))
+		}
+		return okEnvelope(jsonResponse(http.StatusOK, map[string]any{"status": "ok", "count": len(*payload.Accounts), "revision": newRevision}))
+	default:
+		return okEnvelope(jsonResponse(http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"}))
+	}
+}
+
+func accountSnapshotResponse(config pluginConfig) ([]byte, error) {
+	registry, registryRevision, err := accounts.LoadWithRevision(config.AccountsPath)
+	if err != nil {
+		return okEnvelope(jsonResponse(http.StatusInternalServerError, map[string]string{
+			"error": "account_registry_load_failed", "message": err.Error(),
+		}))
+	}
+	credentials, err := cliproxyconfig.Discover(config.ConfigPath, config.ProviderNames)
+	if err != nil {
+		return okEnvelope(jsonResponse(http.StatusInternalServerError, map[string]string{
+			"error": "credential_discovery_failed", "message": "Unable to read CLIProxyAPI credential configuration.",
+		}))
+	}
+	providers, err := cliproxyconfig.DiscoverProviders(config.ConfigPath, config.ProviderNames)
+	if err != nil {
+		return okEnvelope(jsonResponse(http.StatusInternalServerError, map[string]string{
+			"error": "provider_discovery_failed", "message": "Unable to read CLIProxyAPI provider configuration.",
+		}))
+	}
+	providerBaseURL := make(map[string]string, len(providers))
+	for _, provider := range providers {
+		providerBaseURL[strings.ToLower(provider.Name)] = provider.BaseURL
+	}
+	quotaCredentials := append([]cliproxyconfig.Credential(nil), credentials...)
+	quotaIndexByKey := make(map[string]int, len(quotaCredentials)+len(registry))
+	for index, credential := range quotaCredentials {
+		quotaIndexByKey[credential.APIKey] = index
+	}
+	for _, account := range registry {
+		if index, exists := quotaIndexByKey[account.APIKey]; exists {
+			quotaCredentials[index].Enabled = true
+			continue
+		}
+		baseURL, exists := providerBaseURL[strings.ToLower(account.ProviderName)]
+		if !exists {
+			continue
+		}
+		quotaIndexByKey[account.APIKey] = len(quotaCredentials)
+		quotaCredentials = append(quotaCredentials, cliproxyconfig.Credential{
+			ProviderName: account.ProviderName,
+			BaseURL:      baseURL,
+			KeyID:        cliproxyconfig.KeyID(account.APIKey),
+			APIKey:       account.APIKey,
+			Enabled:      true,
+		})
+	}
+	timeout := time.Duration(config.TimeoutSeconds) * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	results := pool.Collect(ctx, quotaCredentials, &http.Client{Timeout: timeout}, config.MaxConcurrency)
+
+	credentialByKey := make(map[string]cliproxyconfig.Credential, len(credentials))
+	resultByKeyID := make(map[string]pool.Result, len(results))
+	for _, credential := range credentials {
+		credentialByKey[credential.APIKey] = credential
+	}
+	for _, result := range results {
+		resultByKeyID[result.KeyID] = result
+	}
+
+	views := make([]accountView, 0, len(registry)+len(credentials))
+	registered := make(map[string]struct{}, len(registry))
+	for _, account := range registry {
+		registered[account.APIKey] = struct{}{}
+		view := accountView{Account: account, KeyID: cliproxyconfig.KeyID(account.APIKey), Status: pool.StatusDisabled}
+		if credential, exists := credentialByKey[account.APIKey]; exists {
+			view.KeyID = credential.KeyID
+			view.PoolEnabled = credential.Enabled
+			if view.ProviderName == "" {
+				view.ProviderName = credential.ProviderName
+			}
+		}
+		if result, ok := resultByKeyID[view.KeyID]; ok {
+			view.Status = result.Status
+			view.Message = result.Message
+			view.Usage = result.Usage
+		}
+		views = append(views, view)
+	}
+	for _, credential := range credentials {
+		if _, exists := registered[credential.APIKey]; exists {
+			continue
+		}
+		view := accountView{
+			Account:     accounts.Account{APIKey: credential.APIKey, ProviderName: credential.ProviderName},
+			KeyID:       credential.KeyID,
+			PoolEnabled: credential.Enabled,
+		}
+		if result, ok := resultByKeyID[credential.KeyID]; ok {
+			view.Status = result.Status
+			view.Message = result.Message
+			view.Usage = result.Usage
+		}
+		views = append(views, view)
+	}
+	return okEnvelope(jsonResponse(http.StatusOK, accountSnapshot{GeneratedAt: time.Now().UTC(), Revision: registryRevision, Providers: providers, Accounts: views}))
 }
 
 type quotaSnapshot struct {

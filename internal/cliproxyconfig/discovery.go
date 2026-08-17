@@ -23,6 +23,11 @@ type Credential struct {
 	Enabled      bool
 }
 
+type Provider struct {
+	Name    string `json:"name"`
+	BaseURL string `json:"base_url"`
+}
+
 type proxyConfig struct {
 	OpenAICompatibility []compatProvider `yaml:"openai-compatibility"`
 }
@@ -39,25 +44,11 @@ type compatAPIKey struct {
 }
 
 func Discover(configPath string, providerNames []string) ([]Credential, error) {
-	file, err := os.Open(configPath)
+	config, err := loadConfig(configPath)
 	if err != nil {
-		return nil, fmt.Errorf("open CLIProxy config: %w", err)
+		return nil, err
 	}
-	defer file.Close()
-
-	var config proxyConfig
-	decoder := yaml.NewDecoder(io.LimitReader(file, maxConfigBytes))
-	if err := decoder.Decode(&config); err != nil {
-		return nil, fmt.Errorf("decode CLIProxy config: %w", err)
-	}
-
-	allowedNames := make(map[string]struct{}, len(providerNames))
-	for _, name := range providerNames {
-		if normalized := strings.ToLower(strings.TrimSpace(name)); normalized != "" {
-			allowedNames[normalized] = struct{}{}
-		}
-	}
-
+	allowedNames := allowedProviderNames(providerNames)
 	credentials := make([]Credential, 0)
 	seen := make(map[string]int)
 	for _, provider := range config.OpenAICompatibility {
@@ -79,13 +70,55 @@ func Discover(configPath string, providerNames []string) ([]Credential, error) {
 			credentials = append(credentials, Credential{
 				ProviderName: strings.TrimSpace(provider.Name),
 				BaseURL:      usageBaseURL,
-				KeyID:        fingerprint(apiKey),
+				KeyID:        KeyID(apiKey),
 				APIKey:       apiKey,
 				Enabled:      enabled,
 			})
 		}
 	}
 	return credentials, nil
+}
+
+func DiscoverProviders(configPath string, providerNames []string) ([]Provider, error) {
+	config, err := loadConfig(configPath)
+	if err != nil {
+		return nil, err
+	}
+	allowedNames := allowedProviderNames(providerNames)
+	providers := make([]Provider, 0, len(config.OpenAICompatibility))
+	for _, provider := range config.OpenAICompatibility {
+		baseURL, ok := providerUsageBaseURL(provider, allowedNames)
+		if !ok {
+			continue
+		}
+		providers = append(providers, Provider{Name: strings.TrimSpace(provider.Name), BaseURL: baseURL})
+	}
+	return providers, nil
+}
+
+func loadConfig(configPath string) (proxyConfig, error) {
+	file, err := os.Open(configPath)
+	if err != nil {
+		return proxyConfig{}, fmt.Errorf("open CLIProxy config: %w", err)
+	}
+	defer file.Close()
+
+	var config proxyConfig
+	decoder := yaml.NewDecoder(io.LimitReader(file, maxConfigBytes))
+	if err := decoder.Decode(&config); err != nil {
+		return proxyConfig{}, fmt.Errorf("decode CLIProxy config: %w", err)
+	}
+	return config, nil
+}
+
+func allowedProviderNames(providerNames []string) map[string]struct{} {
+	allowedNames := make(map[string]struct{}, len(providerNames))
+	for _, name := range providerNames {
+		if normalized := strings.ToLower(strings.TrimSpace(name)); normalized != "" {
+			allowedNames[normalized] = struct{}{}
+		}
+	}
+	return allowedNames
 }
 
 func providerUsageBaseURL(provider compatProvider, allowedNames map[string]struct{}) (string, bool) {
@@ -110,7 +143,7 @@ func providerUsageBaseURL(provider compatProvider, allowedNames map[string]struc
 	}
 }
 
-func fingerprint(apiKey string) string {
+func KeyID(apiKey string) string {
 	digest := sha256.Sum256([]byte(apiKey))
 	return "key-" + hex.EncodeToString(digest[:6])
 }

@@ -67,15 +67,15 @@ func TestManagementRegistrationExposesQuotaPage(t *testing.T) {
 	if err := json.Unmarshal(envelope.Result, &registration); err != nil {
 		t.Fatalf("decode management registration: %v", err)
 	}
-	if len(registration.Resources) != 1 || registration.Resources[0].Path != "/status" || registration.Resources[0].Menu != "OpenCode Go Quota" {
+	if len(registration.Resources) != 1 || registration.Resources[0].Path != "/status" || registration.Resources[0].Menu != "OpenCode Go Pool" {
 		t.Fatalf("unexpected resources: %#v", registration.Resources)
 	}
-	if len(registration.Routes) != 1 || registration.Routes[0].Method != "GET" || registration.Routes[0].Path != "/plugins/opencode-go-quota/quotas" {
+	if len(registration.Routes) != 3 || registration.Routes[0].Method != "GET" || registration.Routes[0].Path != "/plugins/opencode-go-quota/quotas" || registration.Routes[1].Method != "GET" || registration.Routes[1].Path != "/plugins/opencode-go-quota/accounts" || registration.Routes[2].Method != "PUT" || registration.Routes[2].Path != "/plugins/opencode-go-quota/accounts" {
 		t.Fatalf("unexpected routes: %#v", registration.Routes)
 	}
 }
 
-func TestManagementPageRequiresKeyBeforeLoadingQuotaData(t *testing.T) {
+func TestManagementPageReusesManagementCenterLogin(t *testing.T) {
 	raw, err := handleMethod("management.handle", []byte(`{"Method":"GET","Path":"/v0/resource/plugins/opencode-go-quota/status"}`))
 	if err != nil {
 		t.Fatalf("handleMethod() error = %v", err)
@@ -95,14 +95,29 @@ func TestManagementPageRequiresKeyBeforeLoadingQuotaData(t *testing.T) {
 	if response.StatusCode != 200 {
 		t.Fatalf("status = %d", response.StatusCode)
 	}
-	if !bytes.Contains(response.Body, []byte("OpenCode Go Quota")) || !bytes.Contains(response.Body, []byte("Management key")) || !bytes.Contains(response.Body, []byte("5h reset")) || !bytes.Contains(response.Body, []byte("Weekly reset")) || !bytes.Contains(response.Body, []byte("Monthly reset")) {
+	if !bytes.Contains(response.Body, []byte("OpenCode Go Pool")) || !bytes.Contains(response.Body, []byte("cli-proxy-auth")) || !bytes.Contains(response.Body, []byte("/v0/management/plugins/opencode-go-quota/accounts")) || !bytes.Contains(response.Body, []byte("/v0/management/openai-compatibility")) || !bytes.Contains(response.Body, []byte("Add account")) || !bytes.Contains(response.Body, []byte("Referral")) || !bytes.Contains(response.Body, []byte("Referred by account")) || !bytes.Contains(response.Body, []byte(`id="account-referred-by"`)) || !bytes.Contains(response.Body, []byte("Password")) || !bytes.Contains(response.Body, []byte(`id="account-password" type="password"`)) || !bytes.Contains(response.Body, []byte("select.disabled=index>=0")) || !bytes.Contains(response.Body, []byte("revision=snapshot.revision")) || !bytes.Contains(response.Body, []byte("JSON.stringify({revision,accounts:")) || !bytes.Contains(response.Body, []byte("add.disabled=openCodeProviders().length===0")) || !bytes.Contains(response.Body, []byte("No eligible OpenCode provider configured")) || !bytes.Contains(response.Body, []byte("Number(current[index].weight)===0")) || !bytes.Contains(response.Body, []byte("weight:1")) || !bytes.Contains(response.Body, []byte("navigator.locks.request")) || !bytes.Contains(response.Body, []byte("async function recover")) || !bytes.Contains(response.Body, []byte(".links .pill{margin-top:0}")) || !bytes.Contains(response.Body, []byte("5h")) || !bytes.Contains(response.Body, []byte("Weekly")) || !bytes.Contains(response.Body, []byte("Monthly")) {
 		t.Fatalf("unexpected page: %s", response.Body)
 	}
-	if bytes.Contains(response.Body, []byte("api-key-entries")) {
-		t.Fatalf("public shell contains credential data: %s", response.Body)
+	if bytes.Contains(response.Body, []byte("||openCodeProviders()[0]")) {
+		t.Fatalf("provider targeting falls back to a different provider: %s", response.Body)
 	}
-	if bytes.Contains(response.Body, []byte("<form")) || bytes.Contains(response.Body, []byte(`type="submit"`)) || !bytes.Contains(response.Body, []byte(`type="button"`)) {
-		t.Fatalf("management key has a native form-submission path: %s", response.Body)
+	if bytes.Contains(response.Body, []byte("return matches.length?matches:providers")) {
+		t.Fatalf("account creation falls back to unrelated providers: %s", response.Body)
+	}
+	if bytes.Contains(response.Body, []byte("account-enabled")) || bytes.Contains(response.Body, []byte("if(enabled!==")) {
+		t.Fatalf("metadata save is coupled to a pool mutation: %s", response.Body)
+	}
+	if bytes.Contains(response.Body, []byte("claim_url")) || bytes.Contains(response.Body, []byte("account-claim")) {
+		t.Fatalf("obsolete claim-link field remains: %s", response.Body)
+	}
+	if !bytes.Contains(response.Body, []byte("remove.disabled=account.pool_enabled")) || !bytes.Contains(response.Body, []byte("Disable account before deleting it")) {
+		t.Fatalf("active account deletion is not blocked: %s", response.Body)
+	}
+	if bytes.Contains(response.Body, []byte(`placeholder="Management key"`)) || bytes.Contains(response.Body, []byte(`type="password" id="key"`)) {
+		t.Fatalf("page asks for a second management key: %s", response.Body)
+	}
+	if bytes.Contains(response.Body, []byte("<form")) || bytes.Contains(response.Body, []byte(`type="submit"`)) {
+		t.Fatalf("page has a native form-submission path: %s", response.Body)
 	}
 	if csp := response.Headers["Content-Security-Policy"]; len(csp) != 1 || !strings.Contains(csp[0], "form-action 'none'") {
 		t.Fatalf("CSP does not block form submission: %#v", csp)
@@ -110,11 +125,11 @@ func TestManagementPageRequiresKeyBeforeLoadingQuotaData(t *testing.T) {
 }
 
 func TestParsePluginConfigAppliesSafeDefaultsAndOverrides(t *testing.T) {
-	config, err := parsePluginConfig([]byte("config_path: /tmp/cpa.yaml\nprovider_names: [opencode-canary]\nmax_concurrency: 7\ntimeout_seconds: 9\n"))
+	config, err := parsePluginConfig([]byte("config_path: /tmp/cpa.yaml\naccounts_path: /tmp/accounts.yaml\nprovider_names: [opencode-canary]\nmax_concurrency: 7\ntimeout_seconds: 9\n"))
 	if err != nil {
 		t.Fatalf("parsePluginConfig() error = %v", err)
 	}
-	if config.ConfigPath != "/tmp/cpa.yaml" || len(config.ProviderNames) != 1 || config.ProviderNames[0] != "opencode-canary" || config.MaxConcurrency != 7 || config.TimeoutSeconds != 9 {
+	if config.ConfigPath != "/tmp/cpa.yaml" || config.AccountsPath != "/tmp/accounts.yaml" || len(config.ProviderNames) != 1 || config.ProviderNames[0] != "opencode-canary" || config.MaxConcurrency != 7 || config.TimeoutSeconds != 9 {
 		t.Fatalf("unexpected config: %#v", config)
 	}
 }

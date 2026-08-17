@@ -10,6 +10,7 @@ import (
 )
 
 const defaultCLIProxyConfigPath = "/CLIProxyAPI/config.yaml"
+const defaultAccountsPath = "/CLIProxyAPI/opencode-accounts.yaml"
 
 type lifecycleRequest struct {
 	ConfigYAML []byte `json:"config_yaml"`
@@ -17,6 +18,7 @@ type lifecycleRequest struct {
 
 type pluginConfig struct {
 	ConfigPath     string   `yaml:"config_path"`
+	AccountsPath   string   `yaml:"accounts_path"`
 	ProviderNames  []string `yaml:"provider_names"`
 	MaxConcurrency int      `yaml:"max_concurrency"`
 	TimeoutSeconds int      `yaml:"timeout_seconds"`
@@ -30,6 +32,7 @@ var runtimeConfig = struct {
 func defaultPluginConfig() pluginConfig {
 	return pluginConfig{
 		ConfigPath:     defaultCLIProxyConfigPath,
+		AccountsPath:   defaultAccountsPath,
 		MaxConcurrency: 4,
 		TimeoutSeconds: 15,
 	}
@@ -45,6 +48,10 @@ func parsePluginConfig(raw []byte) (pluginConfig, error) {
 	config.ConfigPath = strings.TrimSpace(config.ConfigPath)
 	if config.ConfigPath == "" {
 		config.ConfigPath = defaultCLIProxyConfigPath
+	}
+	config.AccountsPath = strings.TrimSpace(config.AccountsPath)
+	if config.AccountsPath == "" {
+		config.AccountsPath = defaultAccountsPath
 	}
 	if config.MaxConcurrency < 1 || config.MaxConcurrency > 16 {
 		return pluginConfig{}, fmt.Errorf("max_concurrency must be between 1 and 16")
