@@ -1,5 +1,7 @@
 # OpenCode Go Pool
 
+English | [简体中文](README.zh-CN.md)
+
 Account registry, quota dashboard, and operator pool controls for CLIProxyAPI. It targets the standard dynamic-library ABI in CLIProxyAPI v7.2.130 and runs inside Management Center.
 
 ## What it does
