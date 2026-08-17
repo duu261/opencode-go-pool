@@ -45,10 +45,10 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/duu261/opencode-go-quota/internal/accounts"
-	"github.com/duu261/opencode-go-quota/internal/cliproxyconfig"
-	"github.com/duu261/opencode-go-quota/internal/opencode"
-	"github.com/duu261/opencode-go-quota/internal/pool"
+	"github.com/duu261/opencode-go-pool/internal/accounts"
+	"github.com/duu261/opencode-go-pool/internal/cliproxyconfig"
+	"github.com/duu261/opencode-go-pool/internal/opencode"
+	"github.com/duu261/opencode-go-pool/internal/pool"
 )
 
 const (
@@ -190,7 +190,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 				Name:             pluginName,
 				Version:          "0.3.0",
 				Author:           "Duu",
-				GitHubRepository: "https://github.com/duu261/opencode-go-quota",
+				GitHubRepository: "https://github.com/duu261/opencode-go-pool",
 				ConfigFields: []configField{
 					{Name: "config_path", Type: "string", Description: "Protected CLIProxyAPI config file path."},
 					{Name: "accounts_path", Type: "string", Description: "Writable plaintext OpenCode account registry path."},

@@ -28,6 +28,7 @@ go test -race ./...
 ```
 
 The artifact is `dist/opencode-go-quota.so`.
+The plugin ID and library basename remain `opencode-go-quota` for CLIProxyAPI compatibility.
 
 ## CLIProxyAPI configuration
 
@@ -85,3 +86,7 @@ CLIProxyAPI remains the routing source of truth. New accounts are saved parked; 
 ## Scope
 
 No browser account login, database, New API access, or automatic credential disabling. The account registry intentionally stores disposable account credentials in plaintext with mode `0600`.
+
+## License
+
+MIT

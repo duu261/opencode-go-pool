@@ -1,4 +1,4 @@
-module github.com/duu261/opencode-go-quota
+module github.com/duu261/opencode-go-pool
 
 go 1.24
 

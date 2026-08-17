@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/duu261/opencode-go-quota/internal/cliproxyconfig"
+	"github.com/duu261/opencode-go-pool/internal/cliproxyconfig"
 )
 
 func TestCollectMapsHealthyUnavailableAndDisabled(t *testing.T) {

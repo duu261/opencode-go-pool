@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/duu261/opencode-go-quota/internal/accounts"
+	"github.com/duu261/opencode-go-pool/internal/accounts"
 )
 
 func TestAccountRouteMergesRegistryIdentityWithLiveQuota(t *testing.T) {

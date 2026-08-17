@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/duu261/opencode-go-quota/internal/accounts"
+	"github.com/duu261/opencode-go-pool/internal/accounts"
 )
 
 func TestAccountRoutePutRejectsMissingAccountsArray(t *testing.T) {

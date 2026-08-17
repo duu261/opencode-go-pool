@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/duu261/opencode-go-quota/internal/cliproxyconfig"
-	"github.com/duu261/opencode-go-quota/internal/opencode"
+	"github.com/duu261/opencode-go-pool/internal/cliproxyconfig"
+	"github.com/duu261/opencode-go-pool/internal/opencode"
 )
 
 const (
