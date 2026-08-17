@@ -52,10 +52,21 @@ plugins:
       enabled: true
       priority: 1
       config_path: "/CLIProxyAPI/config.yaml"
-      accounts_path: "/CLIProxyAPI/opencode-accounts.yaml"
+      accounts_path: "/CLIProxyAPI/accounts/opencode-accounts.yaml"
       max_concurrency: 4
       timeout_seconds: 15
 ```
+
+必须挂载账号目录，不要只挂载单个 YAML 文件：
+
+```yaml
+services:
+  cli-proxy-api:
+    volumes:
+      - ./accounts:/CLIProxyAPI/accounts
+```
+
+注册表更新会先写入临时文件，再通过原子 rename 替换目标文件。单文件 bind mount 无法被替换，会报错 `device or resource busy`。
 
 账号注册表示例：
 
