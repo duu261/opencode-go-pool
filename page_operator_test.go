@@ -21,7 +21,7 @@ func TestManagementPageUsesDensePoolOperatorTable(t *testing.T) {
 	if err := json.Unmarshal(envelope.Result, &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	for _, want := range []string{"account-table", "Attention", "Referral credits", "Monthly", "Credits", "Add reward", "Manual hold", "auto_state", "referral_credits", "referral_awarded", "manual_hold", "cell=text('div','','quota')", "copyField", "Show", "expiresInDays(31)", "Bulk add", "Paste TSV rows", "Import accepted accounts", "parseBulk", "duplicate in paste", "needsAttention", "['enabled',accounts.filter", "auto_state==='cooling'?'cooling'", "<option value=\"active\">Enabled</option>", "a.pool_enabled?'enabled':'parked'", "attentionRank", "visibleAccounts.sort"} {
+	for _, want := range []string{"account-table", "Attention", "Referral credits", "Monthly", "Credits", "Add reward", "Manual hold", "auto_state", "referral_credits", "referral_awarded", "manual_hold", "cell=text('div','','quota')", "copyField", "Show", "expiresInDays(31)", "Bulk add", "Paste TSV rows", "Import accepted accounts", "parseBulk", "duplicate in paste", "needsAttention", "['enabled',accounts.filter", "auto_state==='cooling'?'cooling'", "<option value=\"eligible\">Eligible now</option>", "<option value=\"enabled\">Enabled</option>", "isPluginEligible", "['eligible',accounts.filter(isPluginEligible)", "a.pool_enabled?'enabled':'parked'", "attentionRank", "visibleAccounts.sort"} {
 		if !bytes.Contains(response.Body, []byte(want)) {
 			t.Fatalf("management page missing %q", want)
 		}
