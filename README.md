@@ -19,6 +19,7 @@ Account registry, quota dashboard, and operator pool controls for CLIProxyAPI. I
 - Deduplicates repeated keys.
 - Provides authenticated `Show`/`Hide` and `Copy` controls for API key, email, password, and referral URL in the Add/Edit dialog.
 - Defaults a newly added account expiry to today plus 31 days; existing expiry dates are preserved when editing.
+- Bulk-imports human-friendly TSV rows with preview, duplicate detection, validation, and one revision-safe save.
 
 ## Requirements
 
@@ -133,6 +134,17 @@ Typical operator flow:
 4. Leave `auto_pool: true` enabled for automatic quota-aware switching.
 5. Use **Manual hold** when an account must not route even if its quota is available.
 6. Disable before deleting or retiring an account.
+
+### Bulk import
+
+Click **Bulk add** and paste one tab-separated row per account. Header row is optional:
+
+```tsv
+label	email	password	api_key	referral_url	referred_by	expires_at	notes
+go-001	user1@example.com	pass-001	sk-...	https://opencode.ai/go?ref=...
+```
+
+Choose the default OpenCode provider, then review the preview. Missing `expires_at` becomes today plus 31 days. Existing API keys and duplicate keys within the paste are rejected; accepted rows are saved together with revision protection. The importer does not overwrite existing accounts.
 
 ## Credential handling
 

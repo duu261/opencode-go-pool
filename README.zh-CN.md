@@ -17,6 +17,7 @@
 - 自动去除重复 key。
 - 在已认证的 Add/Edit 对话框中提供 API key、邮箱、密码和 Referral URL 的 `Show`/`Hide` 与 `Copy` 控制。
 - 新账号的过期时间默认设置为今天之后 31 天；编辑已有账号时保留原过期时间。
+- 支持人类友好的 TSV 批量导入，提供预览、重复检测、校验，并通过一次 revision-safe 保存完成导入。
 
 ## 中文适配
 
@@ -142,6 +143,17 @@ CLIProxyAPI 始终是路由状态的唯一真实来源。新账号保存后默�
 4. 保持 `auto_pool: true`，启用自动配额感知切换。
 5. 账号即使有配额也不能路由时，使用 **Manual hold**。
 6. 删除或退役账号前先 Disable。
+
+### 批量导入
+
+点击 **Bulk add**，粘贴每行一个账号的 TSV。表头可选：
+
+```tsv
+label	email	password	api_key	referral_url	referred_by	expires_at	notes
+go-001	user1@example.com	pass-001	sk-...	https://opencode.ai/go?ref=...
+```
+
+选择默认 OpenCode provider，然后查看预览。缺少 `expires_at` 时自动使用今天之后 31 天。已有 API key 和同一批次内重复的 key 会被拒绝；通过校验的行会在 revision protection 下统一保存。导入不会覆盖已有账号。
 
 ## 凭据处理
 
