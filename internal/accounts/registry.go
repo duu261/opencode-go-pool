@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -38,8 +39,14 @@ type Account struct {
 	Notes            string `json:"notes,omitempty" yaml:"notes,omitempty"`
 }
 
+type RegistryState struct {
+	Accounts            []Account
+	ReferralAwardedKeys map[string]struct{}
+}
+
 type registryFile struct {
-	Accounts []Account `yaml:"accounts"`
+	Accounts            []Account `yaml:"accounts"`
+	ReferralAwardedKeys []string  `yaml:"referral_awarded_keys,omitempty"`
 }
 
 func Load(path string) ([]Account, error) {
@@ -54,18 +61,23 @@ func Load(path string) ([]Account, error) {
 }
 
 func LoadWithRevision(path string) ([]Account, string, error) {
+	state, revision, err := LoadStateWithRevision(path)
+	return state.Accounts, revision, err
+}
+
+func LoadStateWithRevision(path string) (RegistryState, string, error) {
 	path, err := normalizedPath(path)
 	if err != nil {
-		return nil, "", err
+		return RegistryState{}, "", err
 	}
 	lock := registryLock(path)
 	lock.Lock()
 	defer lock.Unlock()
-	accounts, err := loadUnlocked(path)
+	state, err := loadStateUnlocked(path)
 	if err != nil {
-		return nil, "", err
+		return RegistryState{}, "", err
 	}
-	return accounts, revision(accounts), nil
+	return state, revision(state), nil
 }
 
 func Save(path string, accounts []Account) error {
@@ -87,7 +99,7 @@ func Replace(path string, accounts []Account, expectedRevision string) (string, 
 	lock := registryLock(path)
 	lock.Lock()
 	defer lock.Unlock()
-	current, err := loadUnlocked(path)
+	current, err := loadStateUnlocked(path)
 	if err != nil {
 		return "", err
 	}
@@ -99,25 +111,55 @@ func Replace(path string, accounts []Account, expectedRevision string) (string, 
 	if err != nil {
 		return currentRevision, err
 	}
-	if err := saveNormalizedUnlocked(path, normalized); err != nil {
+	current.Accounts = normalized
+	if err := saveStateUnlocked(path, current); err != nil {
+		return currentRevision, err
+	}
+	return revision(current), nil
+}
+
+func ReplaceState(path string, state RegistryState, expectedRevision string) (string, error) {
+	path, err := normalizedPath(path)
+	if err != nil {
+		return "", err
+	}
+	lock := registryLock(path)
+	lock.Lock()
+	defer lock.Unlock()
+	current, err := loadStateUnlocked(path)
+	if err != nil {
+		return "", err
+	}
+	currentRevision := revision(current)
+	if expectedRevision == "" || expectedRevision != currentRevision {
+		return currentRevision, ErrRevisionConflict
+	}
+	normalized, err := normalizeState(state)
+	if err != nil {
+		return currentRevision, err
+	}
+	if err := saveStateUnlocked(path, normalized); err != nil {
 		return currentRevision, err
 	}
 	return revision(normalized), nil
 }
 
-// ApplyReferralAwards applies the one-time reward for accounts newly added to
-// the registry. Existing awarded accounts retain their inviter relationship.
-// Removing an account never reverses a reward. Operators can correct the
-// resulting balance explicitly through the management UI.
 func ApplyReferralAwards(current, next []Account) ([]Account, error) {
+	awarded := map[string]struct{}{}
+	result, _, err := ApplyReferralAwardsWithHistory(current, next, awarded)
+	return result, err
+}
+
+func ApplyReferralAwardsWithHistory(current, next []Account, awardedKeys map[string]struct{}) ([]Account, map[string]struct{}, error) {
 	current, err := normalize(current)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	next, err = normalize(next)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	awarded := cloneKeys(awardedKeys)
 
 	currentByKey := make(map[string]Account, len(current))
 	for _, account := range current {
@@ -134,7 +176,7 @@ func ApplyReferralAwards(current, next []Account) ([]Account, error) {
 		if existed {
 			if previous.ReferralAwarded {
 				if account.ReferredByAPIKey != previous.ReferredByAPIKey {
-					return nil, fmt.Errorf("account %q cannot change its inviter after reward", account.APIKey)
+					return nil, nil, fmt.Errorf("account %q cannot change its inviter after reward", account.APIKey)
 				}
 				account.ReferralAwarded = true
 			}
@@ -145,13 +187,18 @@ func ApplyReferralAwards(current, next []Account) ([]Account, error) {
 		}
 		parentIndex, exists := nextIndexByKey[account.ReferredByAPIKey]
 		if !exists {
-			return nil, fmt.Errorf("account %q referral parent is not registered", account.APIKey)
+			return nil, nil, fmt.Errorf("account %q referral parent is not registered", account.APIKey)
+		}
+		if _, alreadyAwarded := awarded[account.APIKey]; alreadyAwarded {
+			account.ReferralAwarded = true
+			continue
 		}
 		account.ReferralCredits++
 		next[parentIndex].ReferralCredits++
 		account.ReferralAwarded = true
+		awarded[account.APIKey] = struct{}{}
 	}
-	return next, nil
+	return next, awarded, nil
 }
 
 // AdjustReferralCredits applies an explicit operator correction to one account.
@@ -176,50 +223,70 @@ func AdjustReferralCredits(accounts []Account, apiKey string, delta int) ([]Acco
 }
 
 func loadUnlocked(path string) ([]Account, error) {
+	state, err := loadStateUnlocked(path)
+	return state.Accounts, err
+}
+
+func loadStateUnlocked(path string) (RegistryState, error) {
 	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if errors.Is(err, os.ErrNotExist) {
-		return []Account{}, nil
+		return RegistryState{Accounts: []Account{}, ReferralAwardedKeys: map[string]struct{}{}}, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("open account registry: %w", err)
+		return RegistryState{}, fmt.Errorf("open account registry: %w", err)
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return nil, fmt.Errorf("stat account registry: %w", err)
+		return RegistryState{}, fmt.Errorf("stat account registry: %w", err)
 	}
 	if !info.Mode().IsRegular() {
-		return nil, errors.New("account registry must be a regular file")
+		return RegistryState{}, errors.New("account registry must be a regular file")
 	}
 	if info.Mode().Perm() != 0o600 {
 		if err := file.Chmod(0o600); err != nil {
-			return nil, fmt.Errorf("secure account registry permissions: %w", err)
+			return RegistryState{}, fmt.Errorf("secure account registry permissions: %w", err)
 		}
 	}
 
 	var registry registryFile
 	decoder := yaml.NewDecoder(io.LimitReader(file, maxRegistryBytes))
 	if err := decoder.Decode(&registry); errors.Is(err, io.EOF) {
-		return []Account{}, nil
+		return RegistryState{Accounts: []Account{}, ReferralAwardedKeys: map[string]struct{}{}}, nil
 	} else if err != nil {
-		return nil, fmt.Errorf("decode account registry: %w", err)
+		return RegistryState{}, fmt.Errorf("decode account registry: %w", err)
 	}
 	accounts, err := normalize(registry.Accounts)
 	if err != nil {
-		return nil, err
+		return RegistryState{}, err
 	}
-	return accounts, nil
+	awarded := make(map[string]struct{}, len(registry.ReferralAwardedKeys))
+	for _, key := range registry.ReferralAwardedKeys {
+		key = strings.TrimSpace(key)
+		if key != "" {
+			awarded[key] = struct{}{}
+		}
+	}
+	return RegistryState{Accounts: accounts, ReferralAwardedKeys: awarded}, nil
 }
 
 func saveUnlocked(path string, accounts []Account) error {
-	accounts, err := normalize(accounts)
+	state, err := loadStateUnlocked(path)
 	if err != nil {
 		return err
 	}
-	return saveNormalizedUnlocked(path, accounts)
+	state.Accounts, err = normalize(accounts)
+	if err != nil {
+		return err
+	}
+	return saveStateUnlocked(path, state)
 }
 
-func saveNormalizedUnlocked(path string, accounts []Account) error {
+func saveStateUnlocked(path string, state RegistryState) error {
+	state, err := normalizeState(state)
+	if err != nil {
+		return err
+	}
 	dir := filepath.Dir(path)
 	file, err := os.CreateTemp(dir, ".opencode-accounts-*.tmp")
 	if err != nil {
@@ -234,7 +301,7 @@ func saveNormalizedUnlocked(path string, accounts []Account) error {
 	}
 	encoder := yaml.NewEncoder(file)
 	encoder.SetIndent(2)
-	if err := encoder.Encode(registryFile{Accounts: accounts}); err != nil {
+	if err := encoder.Encode(registryFile{Accounts: state.Accounts, ReferralAwardedKeys: sortedKeys(state.ReferralAwardedKeys)}); err != nil {
 		file.Close()
 		return fmt.Errorf("encode account registry: %w", err)
 	}
@@ -268,8 +335,39 @@ func registryLock(path string) *sync.Mutex {
 	return value.(*sync.Mutex)
 }
 
-func revision(accounts []Account) string {
-	raw, _ := json.Marshal(accounts)
+func normalizeState(state RegistryState) (RegistryState, error) {
+	accounts, err := normalize(state.Accounts)
+	if err != nil {
+		return RegistryState{}, err
+	}
+	return RegistryState{Accounts: accounts, ReferralAwardedKeys: cloneKeys(state.ReferralAwardedKeys)}, nil
+}
+
+func cloneKeys(keys map[string]struct{}) map[string]struct{} {
+	result := make(map[string]struct{}, len(keys))
+	for key := range keys {
+		key = strings.TrimSpace(key)
+		if key != "" {
+			result[key] = struct{}{}
+		}
+	}
+	return result
+}
+
+func sortedKeys(keys map[string]struct{}) []string {
+	result := make([]string, 0, len(keys))
+	for key := range keys {
+		result = append(result, key)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func revision(state RegistryState) string {
+	raw, _ := json.Marshal(struct {
+		Accounts            []Account `json:"accounts"`
+		ReferralAwardedKeys []string  `json:"referral_awarded_keys,omitempty"`
+	}{Accounts: state.Accounts, ReferralAwardedKeys: sortedKeys(state.ReferralAwardedKeys)})
 	digest := sha256.Sum256(raw)
 	return hex.EncodeToString(digest[:])
 }

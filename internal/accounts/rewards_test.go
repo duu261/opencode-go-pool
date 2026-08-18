@@ -26,7 +26,7 @@ func TestApplyReferralAwardsCreditsNewInviteeAndInviterOnce(t *testing.T) {
 func TestApplyReferralAwardsRejectsChangingAwardedInviter(t *testing.T) {
 	parentA := Account{APIKey: "parent-a", Label: "go-001", ReferralCredits: 1}
 	parentB := Account{APIKey: "parent-b", Label: "go-002"}
-	child := Account{APIKey: "child", Label: "go-003", ReferredByAPIKey: parentA.APIKey, ReferralCredits: 1, ReferralAwarded: true}
+	child := Account{APIKey: "child-key", Label: "go-003", ReferredByAPIKey: parentA.APIKey, ReferralCredits: 1, ReferralAwarded: true}
 
 	_, err := ApplyReferralAwards(
 		[]Account{parentA, parentB, child},
@@ -34,5 +34,22 @@ func TestApplyReferralAwardsRejectsChangingAwardedInviter(t *testing.T) {
 	)
 	if err == nil {
 		t.Fatal("ApplyReferralAwards() error = nil, want awarded inviter to be immutable")
+	}
+}
+
+func TestApplyReferralAwardsWithHistoryDoesNotReawardReaddedInvitee(t *testing.T) {
+	parent := Account{APIKey: "parent-key", Label: "go-001"}
+	child := Account{APIKey: "child-key", Label: "go-002", ReferredByAPIKey: parent.APIKey}
+	awarded := map[string]struct{}{child.APIKey: {}}
+
+	next, history, err := ApplyReferralAwardsWithHistory([]Account{parent}, []Account{parent, child}, awarded)
+	if err != nil {
+		t.Fatalf("ApplyReferralAwardsWithHistory() error = %v", err)
+	}
+	if next[0].ReferralCredits != 0 || next[1].ReferralCredits != 0 || !next[1].ReferralAwarded {
+		t.Fatalf("re-added award changed balances: %#v", next)
+	}
+	if _, ok := history[child.APIKey]; !ok {
+		t.Fatalf("history lost awarded key: %#v", history)
 	}
 }

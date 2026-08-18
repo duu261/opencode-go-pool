@@ -292,12 +292,13 @@ func handleAccountsManagement(request managementRequest) ([]byte, error) {
 				"error": "missing_revision", "message": "Account registry revision is required.",
 			}))
 		}
-		currentAccounts, currentRevision, err := accounts.LoadWithRevision(config.AccountsPath)
+		currentState, currentRevision, err := accounts.LoadStateWithRevision(config.AccountsPath)
 		if err != nil {
 			return okEnvelope(jsonResponse(http.StatusInternalServerError, map[string]string{
 				"error": "account_registry_load_failed", "message": err.Error(),
 			}))
 		}
+		currentAccounts := currentState.Accounts
 		if payload.Revision != currentRevision {
 			return okEnvelope(jsonResponse(http.StatusConflict, map[string]string{
 				"error": "account_registry_conflict", "message": "Account registry changed in another tab. Refresh and retry.", "revision": currentRevision,
@@ -351,13 +352,13 @@ func handleAccountsManagement(request managementRequest) ([]byte, error) {
 				}))
 			}
 		}
-		nextAccounts, err := accounts.ApplyReferralAwards(currentAccounts, *payload.Accounts)
+		nextAccounts, awardedKeys, err := accounts.ApplyReferralAwardsWithHistory(currentAccounts, *payload.Accounts, currentState.ReferralAwardedKeys)
 		if err != nil {
 			return okEnvelope(jsonResponse(http.StatusUnprocessableEntity, map[string]string{
 				"error": "referral_award_failed", "message": err.Error(),
 			}))
 		}
-		newRevision, err := accounts.Replace(config.AccountsPath, nextAccounts, payload.Revision)
+		newRevision, err := accounts.ReplaceState(config.AccountsPath, accounts.RegistryState{Accounts: nextAccounts, ReferralAwardedKeys: awardedKeys}, payload.Revision)
 		if errors.Is(err, accounts.ErrRevisionConflict) {
 			return okEnvelope(jsonResponse(http.StatusConflict, map[string]string{
 				"error": "account_registry_conflict", "message": "Account registry changed in another tab. Refresh and retry.", "revision": newRevision,
@@ -375,12 +376,13 @@ func handleAccountsManagement(request managementRequest) ([]byte, error) {
 }
 
 func accountSnapshotResponse(config pluginConfig) ([]byte, error) {
-	registry, registryRevision, err := accounts.LoadWithRevision(config.AccountsPath)
+	state, registryRevision, err := accounts.LoadStateWithRevision(config.AccountsPath)
 	if err != nil {
 		return okEnvelope(jsonResponse(http.StatusInternalServerError, map[string]string{
 			"error": "account_registry_load_failed", "message": err.Error(),
 		}))
 	}
+	registry := state.Accounts
 	credentials, err := cliproxyconfig.Discover(config.ConfigPath, config.ProviderNames)
 	if err != nil {
 		return okEnvelope(jsonResponse(http.StatusInternalServerError, map[string]string{

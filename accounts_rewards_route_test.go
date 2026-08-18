@@ -43,4 +43,31 @@ func TestAccountRoutePutAwardsReferralCreditsForNewAccount(t *testing.T) {
 	if len(stored) != 2 || stored[0].ReferralCredits != 1 || stored[1].ReferralCredits != 1 || !stored[1].ReferralAwarded {
 		t.Fatalf("stored referral credits = %#v, want one credit on each account", stored)
 	}
+
+	_, deleteRevision, err := accounts.LoadWithRevision(accountsPath)
+	if err != nil {
+		t.Fatalf("LoadWithRevision() before delete error = %v", err)
+	}
+	deleteBody, _ := json.Marshal(map[string]any{"revision": deleteRevision, "accounts": []accounts.Account{stored[0]}})
+	deleteRequest, _ := json.Marshal(managementRequest{Method: "PUT", Path: fullAccountsPath, Body: deleteBody})
+	if _, err := handleMethod("management.handle", deleteRequest); err != nil {
+		t.Fatalf("delete account error = %v", err)
+	}
+
+	_, readdRevision, err := accounts.LoadWithRevision(accountsPath)
+	if err != nil {
+		t.Fatalf("LoadWithRevision() before re-add error = %v", err)
+	}
+	readdBody, _ := json.Marshal(map[string]any{"revision": readdRevision, "accounts": []accounts.Account{stored[0], child}})
+	readdRequest, _ := json.Marshal(managementRequest{Method: "PUT", Path: fullAccountsPath, Body: readdBody})
+	if _, err := handleMethod("management.handle", readdRequest); err != nil {
+		t.Fatalf("re-add account error = %v", err)
+	}
+	stored, err = accounts.Load(accountsPath)
+	if err != nil {
+		t.Fatalf("Load() after re-add error = %v", err)
+	}
+	if len(stored) != 2 || stored[0].ReferralCredits != 1 || stored[1].ReferralCredits != 0 || !stored[1].ReferralAwarded {
+		t.Fatalf("re-added referral credits = %#v, want no second award", stored)
+	}
 }

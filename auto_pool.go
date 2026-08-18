@@ -177,7 +177,7 @@ func autoStateView(authID string) (string, *time.Time) {
 	return state, &resetAt
 }
 
-func (s *autoPoolState) heldSnapshot(config pluginConfig, now time.Time) map[string]bool {
+func (s *autoPoolState) heldSnapshot(config pluginConfig, now time.Time) (map[string]bool, bool) {
 	s.mu.RLock()
 	if now.Before(s.heldUntil) {
 		result := make(map[string]bool, len(s.held))
@@ -185,14 +185,14 @@ func (s *autoPoolState) heldSnapshot(config pluginConfig, now time.Time) map[str
 			result[key] = value
 		}
 		s.mu.RUnlock()
-		return result
+		return result, true
 	}
 	s.mu.RUnlock()
 
 	registry, errRegistry := accounts.Load(config.AccountsPath)
 	credentials, errCredentials := cliproxyconfig.Discover(config.ConfigPath, config.ProviderNames)
 	if errRegistry != nil || errCredentials != nil {
-		return nil
+		return nil, false
 	}
 	credentialByKey := make(map[string]cliproxyconfig.Credential, len(credentials))
 	for _, credential := range credentials {
@@ -211,7 +211,7 @@ func (s *autoPoolState) heldSnapshot(config pluginConfig, now time.Time) map[str
 	s.held = held
 	s.heldUntil = now.Add(time.Second)
 	s.mu.Unlock()
-	return held
+	return held, true
 }
 
 func isOpenCodeProviderKey(value string) bool {
@@ -261,7 +261,10 @@ func handleSchedulerPick(raw []byte) ([]byte, error) {
 		}
 	}
 	blocked := runtimeAutoPool.blockedSnapshot()
-	held := runtimeAutoPool.heldSnapshot(config, now)
+	held, holdsAvailable := runtimeAutoPool.heldSnapshot(config, now)
+	if !holdsAvailable {
+		return okEnvelope(schedulerPickResponse{Handled: false})
+	}
 	eligible := eligibleAutoPoolCandidates(candidates, blocked, held, now)
 	candidate, ok := selectAutoPoolCandidate(runtimeAutoPool.nextCandidateOrder(eligible), nil, nil, now)
 	if !ok {
