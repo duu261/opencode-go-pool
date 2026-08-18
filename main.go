@@ -260,7 +260,7 @@ type accountView struct {
 }
 
 func quotaState(usage *opencode.Usage, status string) string {
-	if status != "" && status != "ok" {
+	if status != "" && status != pool.StatusHealthy && status != "ok" {
 		return status
 	}
 	if usage == nil {
