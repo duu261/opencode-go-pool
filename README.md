@@ -15,6 +15,8 @@ Account registry, quota dashboard, and operator pool controls for CLIProxyAPI. I
 - Reuses the Management Center login stored by its **Remember password** option. The plugin does not ask for a second management key.
 - Marks HTTP 401 as `unavailable`, never as exhausted quota.
 - Deduplicates repeated keys.
+- Provides authenticated `Show`/`Hide` and `Copy` controls for API key, email, password, and referral URL in the Add/Edit dialog.
+- Defaults a newly added account expiry to today plus 31 days; existing expiry dates are preserved when editing.
 
 ## Requirements
 
@@ -85,9 +87,47 @@ CLIProxyAPI plugin resource routes are unauthenticated, so the public route serv
 
 CLIProxyAPI remains the routing source of truth. New accounts are saved parked; **Enable** and **Disable** are separate routing actions. An active account must be disabled before deletion, avoiding partial cross-store mutations. Each pool mutation refreshes the provider immediately before PATCH and serializes same-browser tabs with a Web Lock. When `auto_pool: true`, request-time scheduler routing skips recognized OpenCode quota exhaustion without rewriting provider config. Reset expiry restores eligibility; **Manual hold** always wins.
 
+## How switching works
+
+There are two different switches:
+
+1. **Pool switch - Enable / Disable**
+   - **Enable** adds the account API key to the configured CLIProxy OpenCode provider.
+   - **Disable** removes that key from the provider, so CLIProxy stops sending traffic to it.
+   - CLIProxy provider configuration is the routing source of truth. The registry alone does not make a disabled account route traffic.
+   - Deletion is blocked until the account is disabled.
+
+2. **Automatic request-time switch - `auto_pool: true`**
+   - The scheduler only handles candidates belonging to the recognized OpenCode provider.
+   - It chooses among eligible OpenCode keys using round-robin selection.
+   - Keys in cooldown, manually held, disabled, or unavailable are skipped.
+   - A recognized 5h/weekly quota error parks that credential in memory until its reset time. It then becomes eligible again automatically.
+   - Automatic parking does not rewrite provider configuration and does not touch unrelated providers or models.
+   - If credential or hold-state discovery fails, scheduling fails closed and delegates to the native CLIProxy scheduler. It never assumes a key is safe.
+
+Quota labels mean:
+
+- `quota limited`: at least one of 5h, weekly, or monthly windows is exhausted.
+- `quota depleted`: all three windows are exhausted.
+- `unavailable`: the usage check could not authenticate or complete.
+- A `0%` 5h window means that window currently has no usage. It does not mean the account is dead.
+
+Typical operator flow:
+
+1. Add the account. Expiry defaults to 31 days from today.
+2. Use `Copy` in the authenticated dialog when you need the API key, email, password, or referral URL.
+3. Enable the account to place its key in the CLIProxy provider.
+4. Leave `auto_pool: true` enabled for automatic quota-aware switching.
+5. Use **Manual hold** when an account must not route even if its quota is available.
+6. Disable before deleting or retiring an account.
+
+## Credential handling
+
+The registry intentionally stores disposable account credentials in plaintext with file mode `0600`. The UI masks API keys and passwords by default. `Show` and `Copy` are explicit operator actions inside the authenticated Add/Edit dialog; credentials are not rendered in the account table.
+
 ## Scope
 
-No browser account login, database, New API access, or provider-config rewriting for automatic parking. The account registry intentionally stores disposable account credentials in plaintext with mode `0600`.
+No browser account login, database, New API access, or provider-config rewriting for automatic parking.
 
 ## License
 
