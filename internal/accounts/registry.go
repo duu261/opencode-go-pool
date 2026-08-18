@@ -267,6 +267,11 @@ func loadStateUnlocked(path string) (RegistryState, error) {
 			awarded[key] = struct{}{}
 		}
 	}
+	for _, account := range accounts {
+		if account.ReferralAwarded {
+			awarded[account.APIKey] = struct{}{}
+		}
+	}
 	return RegistryState{Accounts: accounts, ReferralAwardedKeys: awarded}, nil
 }
 

@@ -252,10 +252,33 @@ type accountView struct {
 	KeyID       string          `json:"key_id"`
 	PoolEnabled bool            `json:"pool_enabled"`
 	Status      string          `json:"status"`
+	QuotaState  string          `json:"quota_state,omitempty"`
 	Message     string          `json:"message,omitempty"`
 	AutoState   string          `json:"auto_state,omitempty"`
 	AutoResetAt *time.Time      `json:"auto_reset_at,omitempty"`
 	Usage       *opencode.Usage `json:"usage,omitempty"`
+}
+
+func quotaState(usage *opencode.Usage, status string) string {
+	if status != "" && status != "ok" {
+		return status
+	}
+	if usage == nil {
+		return status
+	}
+	exhausted := 0
+	for _, window := range []opencode.Window{usage.Rolling, usage.Weekly, usage.Monthly} {
+		if window.Percent >= 100 {
+			exhausted++
+		}
+	}
+	if exhausted == 3 {
+		return "quota_depleted"
+	}
+	if exhausted > 0 {
+		return "quota_limited"
+	}
+	return status
 }
 
 type accountSnapshot struct {
@@ -460,6 +483,7 @@ func accountSnapshotResponse(config pluginConfig) ([]byte, error) {
 			view.Message = result.Message
 			view.Usage = result.Usage
 		}
+		view.QuotaState = quotaState(view.Usage, view.Status)
 		views = append(views, view)
 	}
 	for _, credential := range credentials {
@@ -477,6 +501,7 @@ func accountSnapshotResponse(config pluginConfig) ([]byte, error) {
 			view.Message = result.Message
 			view.Usage = result.Usage
 		}
+		view.QuotaState = quotaState(view.Usage, view.Status)
 		views = append(views, view)
 	}
 	return okEnvelope(jsonResponse(http.StatusOK, accountSnapshot{GeneratedAt: time.Now().UTC(), Revision: registryRevision, Providers: providers, Accounts: views}))
