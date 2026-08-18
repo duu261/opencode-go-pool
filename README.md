@@ -9,6 +9,8 @@ Account registry, quota dashboard, and operator pool controls for CLIProxyAPI. I
 - Auto-detects direct `https://opencode.ai/zen/go` and CLIProxy-compatible `https://opencode.ai/zen/go/v1` providers on the standard HTTPS port.
 - Resolves the OpenCode `/v1/usage` endpoint without duplicating a configured `/v1` suffix, then queries enabled keys with bounded concurrency.
 - Shows recognizable account identity, status, 5h/weekly/monthly usage, and reset times for both active and parked registry accounts.
+- Auto-parks OpenCode credentials at request time after a recognized 5h/weekly exhaustion response, then restores routing when the reset expires.
+- Manual hold overrides automatic routing and is visible in the Attention view.
 - Adds, edits, removes, enables, and disables accounts through CLIProxyAPI's authenticated OpenAI-compatible provider Management API.
 - Reuses the Management Center login stored by its **Remember password** option. The plugin does not ask for a second management key.
 - Marks HTTP 401 as `unavailable`, never as exhausted quota.
@@ -81,11 +83,11 @@ CLIProxyAPI plugin resource routes are unauthenticated, so the public route serv
 
 ## Pool controls
 
-CLIProxyAPI remains the routing source of truth. New accounts are saved parked; **Enable** and **Disable** are separate routing actions. An active account must be disabled before deletion, avoiding partial cross-store mutations. Each pool mutation refreshes the provider immediately before PATCH and serializes same-browser tabs with a Web Lock. The plugin does not automatically disable credentials.
+CLIProxyAPI remains the routing source of truth. New accounts are saved parked; **Enable** and **Disable** are separate routing actions. An active account must be disabled before deletion, avoiding partial cross-store mutations. Each pool mutation refreshes the provider immediately before PATCH and serializes same-browser tabs with a Web Lock. When `auto_pool: true`, request-time scheduler routing skips recognized OpenCode quota exhaustion without rewriting provider config. Reset expiry restores eligibility; **Manual hold** always wins.
 
 ## Scope
 
-No browser account login, database, New API access, or automatic credential disabling. The account registry intentionally stores disposable account credentials in plaintext with mode `0600`.
+No browser account login, database, New API access, or provider-config rewriting for automatic parking. The account registry intentionally stores disposable account credentials in plaintext with mode `0600`.
 
 ## License
 

@@ -22,6 +22,7 @@ type pluginConfig struct {
 	ProviderNames  []string `yaml:"provider_names"`
 	MaxConcurrency int      `yaml:"max_concurrency"`
 	TimeoutSeconds int      `yaml:"timeout_seconds"`
+	AutoPool       bool     `yaml:"auto_pool"`
 }
 
 var runtimeConfig = struct {

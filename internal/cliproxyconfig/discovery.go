@@ -19,6 +19,8 @@ type Credential struct {
 	ProviderName string
 	BaseURL      string
 	KeyID        string
+	AuthID       string
+	ProxyURL     string
 	APIKey       string
 	Enabled      bool
 }
@@ -39,8 +41,9 @@ type compatProvider struct {
 }
 
 type compatAPIKey struct {
-	APIKey string `yaml:"api-key"`
-	Weight *int   `yaml:"weight"`
+	APIKey   string `yaml:"api-key"`
+	ProxyURL string `yaml:"proxy-url"`
+	Weight   *int   `yaml:"weight"`
 }
 
 func Discover(configPath string, providerNames []string) ([]Credential, error) {
@@ -71,6 +74,8 @@ func Discover(configPath string, providerNames []string) ([]Credential, error) {
 				ProviderName: strings.TrimSpace(provider.Name),
 				BaseURL:      usageBaseURL,
 				KeyID:        KeyID(apiKey),
+				AuthID:       RuntimeAuthID(provider.Name, apiKey, provider.BaseURL, entry.ProxyURL),
+				ProxyURL:     strings.TrimSpace(entry.ProxyURL),
 				APIKey:       apiKey,
 				Enabled:      enabled,
 			})
@@ -146,4 +151,18 @@ func providerUsageBaseURL(provider compatProvider, allowedNames map[string]struc
 func KeyID(apiKey string) string {
 	digest := sha256.Sum256([]byte(apiKey))
 	return "key-" + hex.EncodeToString(digest[:6])
+}
+
+// RuntimeAuthID mirrors CLIProxyAPI v7.2.130's stable OpenAI-compatible auth ID.
+// It uses the raw configured base URL, not the normalized usage URL.
+func RuntimeAuthID(providerName, apiKey, baseURL, proxyURL string) string {
+	kind := "openai-compatibility:" + strings.ToLower(strings.TrimSpace(providerName))
+	hasher := sha256.New()
+	hasher.Write([]byte(kind))
+	for _, part := range []string{apiKey, baseURL, proxyURL} {
+		hasher.Write([]byte{0})
+		hasher.Write([]byte(strings.TrimSpace(part)))
+	}
+	digest := hex.EncodeToString(hasher.Sum(nil))
+	return kind + ":" + digest[:12]
 }

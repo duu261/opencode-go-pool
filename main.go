@@ -96,6 +96,8 @@ type configField struct {
 }
 
 type registrationCapabilities struct {
+	Scheduler     bool `json:"scheduler"`
+	UsagePlugin   bool `json:"usage_plugin"`
 	ManagementAPI bool `json:"management_api"`
 }
 
@@ -185,7 +187,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 			return nil, err
 		}
 		return okEnvelope(registration{
-			SchemaVersion: 1,
+			SchemaVersion: 3,
 			Metadata: metadata{
 				Name:             pluginName,
 				Version:          "0.3.0",
@@ -197,9 +199,10 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 					{Name: "provider_names", Type: "array", Description: "Additional OpenAI-compatible provider names to include."},
 					{Name: "max_concurrency", Type: "integer", Description: "Concurrent quota requests, 1-16."},
 					{Name: "timeout_seconds", Type: "integer", Description: "Whole-report timeout, 1-60 seconds."},
+					{Name: "auto_pool", Type: "boolean", Description: "Skip recently quota-exhausted credentials at request time."},
 				},
 			},
-			Capabilities: registrationCapabilities{ManagementAPI: true},
+			Capabilities: registrationCapabilities{Scheduler: true, UsagePlugin: true, ManagementAPI: true},
 		})
 	case "management.register":
 		return okEnvelope(managementRegistration{
@@ -216,6 +219,10 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		})
 	case "management.handle":
 		return handleManagement(request)
+	case "scheduler.pick":
+		return handleSchedulerPick(request)
+	case "usage.handle":
+		return handleUsage(request)
 	default:
 		return errorEnvelope("unknown_method", "unknown method: "+method), nil
 	}
@@ -246,6 +253,8 @@ type accountView struct {
 	PoolEnabled bool            `json:"pool_enabled"`
 	Status      string          `json:"status"`
 	Message     string          `json:"message,omitempty"`
+	AutoState   string          `json:"auto_state,omitempty"`
+	AutoResetAt *time.Time      `json:"auto_reset_at,omitempty"`
 	Usage       *opencode.Usage `json:"usage,omitempty"`
 }
 
@@ -342,7 +351,13 @@ func handleAccountsManagement(request managementRequest) ([]byte, error) {
 				}))
 			}
 		}
-		newRevision, err := accounts.Replace(config.AccountsPath, *payload.Accounts, payload.Revision)
+		nextAccounts, err := accounts.ApplyReferralAwards(currentAccounts, *payload.Accounts)
+		if err != nil {
+			return okEnvelope(jsonResponse(http.StatusUnprocessableEntity, map[string]string{
+				"error": "referral_award_failed", "message": err.Error(),
+			}))
+		}
+		newRevision, err := accounts.Replace(config.AccountsPath, nextAccounts, payload.Revision)
 		if errors.Is(err, accounts.ErrRevisionConflict) {
 			return okEnvelope(jsonResponse(http.StatusConflict, map[string]string{
 				"error": "account_registry_conflict", "message": "Account registry changed in another tab. Refresh and retry.", "revision": newRevision,
@@ -430,6 +445,13 @@ func accountSnapshotResponse(config pluginConfig) ([]byte, error) {
 			if view.ProviderName == "" {
 				view.ProviderName = credential.ProviderName
 			}
+			state, resetAt := runtimeAutoPool.state(credential.AuthID, time.Now())
+			view.AutoState = state
+			if view.ManualHold {
+				view.AutoState = "manual_hold"
+			} else if !resetAt.IsZero() {
+				view.AutoResetAt = &resetAt
+			}
 		}
 		if result, ok := resultByKeyID[view.KeyID]; ok {
 			view.Status = result.Status
@@ -447,6 +469,7 @@ func accountSnapshotResponse(config pluginConfig) ([]byte, error) {
 			KeyID:       credential.KeyID,
 			PoolEnabled: credential.Enabled,
 		}
+		view.AutoState, view.AutoResetAt = autoStateView(credential.AuthID)
 		if result, ok := resultByKeyID[credential.KeyID]; ok {
 			view.Status = result.Status
 			view.Message = result.Message

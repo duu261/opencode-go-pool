@@ -31,6 +31,9 @@ type Account struct {
 	Password         string `json:"password,omitempty" yaml:"password,omitempty"`
 	ReferralURL      string `json:"referral_url,omitempty" yaml:"referral_url,omitempty"`
 	ReferredByAPIKey string `json:"referred_by_api_key,omitempty" yaml:"referred_by_api_key,omitempty"`
+	ReferralCredits  int    `json:"referral_credits,omitempty" yaml:"referral_credits,omitempty"`
+	ReferralAwarded  bool   `json:"referral_awarded,omitempty" yaml:"referral_awarded,omitempty"`
+	ManualHold       bool   `json:"manual_hold,omitempty" yaml:"manual_hold,omitempty"`
 	ExpiresAt        string `json:"expires_at,omitempty" yaml:"expires_at,omitempty"`
 	Notes            string `json:"notes,omitempty" yaml:"notes,omitempty"`
 }
@@ -100,6 +103,76 @@ func Replace(path string, accounts []Account, expectedRevision string) (string, 
 		return currentRevision, err
 	}
 	return revision(normalized), nil
+}
+
+// ApplyReferralAwards applies the one-time reward for accounts newly added to
+// the registry. Existing awarded accounts retain their inviter relationship.
+// Removing an account never reverses a reward. Operators can correct the
+// resulting balance explicitly through the management UI.
+func ApplyReferralAwards(current, next []Account) ([]Account, error) {
+	current, err := normalize(current)
+	if err != nil {
+		return nil, err
+	}
+	next, err = normalize(next)
+	if err != nil {
+		return nil, err
+	}
+
+	currentByKey := make(map[string]Account, len(current))
+	for _, account := range current {
+		currentByKey[account.APIKey] = account
+	}
+	nextIndexByKey := make(map[string]int, len(next))
+	for index, account := range next {
+		nextIndexByKey[account.APIKey] = index
+	}
+
+	for index := range next {
+		account := &next[index]
+		previous, existed := currentByKey[account.APIKey]
+		if existed {
+			if previous.ReferralAwarded {
+				if account.ReferredByAPIKey != previous.ReferredByAPIKey {
+					return nil, fmt.Errorf("account %q cannot change its inviter after reward", account.APIKey)
+				}
+				account.ReferralAwarded = true
+			}
+			continue
+		}
+		if account.ReferredByAPIKey == "" {
+			continue
+		}
+		parentIndex, exists := nextIndexByKey[account.ReferredByAPIKey]
+		if !exists {
+			return nil, fmt.Errorf("account %q referral parent is not registered", account.APIKey)
+		}
+		account.ReferralCredits++
+		next[parentIndex].ReferralCredits++
+		account.ReferralAwarded = true
+	}
+	return next, nil
+}
+
+// AdjustReferralCredits applies an explicit operator correction to one account.
+func AdjustReferralCredits(accounts []Account, apiKey string, delta int) ([]Account, error) {
+	accounts, err := normalize(accounts)
+	if err != nil {
+		return nil, err
+	}
+	apiKey = strings.TrimSpace(apiKey)
+	for index := range accounts {
+		if accounts[index].APIKey != apiKey {
+			continue
+		}
+		next := accounts[index].ReferralCredits + delta
+		if next < 0 {
+			return nil, fmt.Errorf("account %q referral credits cannot be negative", apiKey)
+		}
+		accounts[index].ReferralCredits = next
+		return accounts, nil
+	}
+	return nil, fmt.Errorf("account %q is not registered", apiKey)
 }
 
 func loadUnlocked(path string) ([]Account, error) {
@@ -208,6 +281,9 @@ func normalize(accounts []Account) ([]Account, error) {
 		account.APIKey = strings.TrimSpace(account.APIKey)
 		if account.APIKey == "" {
 			return nil, fmt.Errorf("account %d API key is required", index+1)
+		}
+		if account.ReferralCredits < 0 {
+			return nil, fmt.Errorf("account %d referral credits cannot be negative", index+1)
 		}
 		if _, exists := seen[account.APIKey]; exists {
 			return nil, fmt.Errorf("duplicate account API key at item %d", index+1)
