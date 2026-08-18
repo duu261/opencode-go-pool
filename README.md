@@ -1,5 +1,7 @@
 # OpenCode Go Pool
 
+English | [简体中文](README.zh-CN.md)
+
 Account registry, quota dashboard, and operator pool controls for CLIProxyAPI. It targets the standard dynamic-library ABI in CLIProxyAPI v7.2.130 and runs inside Management Center.
 
 ## What it does
@@ -47,10 +49,21 @@ plugins:
       enabled: true
       priority: 1
       config_path: "/CLIProxyAPI/config.yaml"
-      accounts_path: "/CLIProxyAPI/opencode-accounts.yaml"
+      accounts_path: "/CLIProxyAPI/accounts/opencode-accounts.yaml"
       max_concurrency: 4
       timeout_seconds: 15
 ```
+
+Mount the account directory, not the individual YAML file:
+
+```yaml
+services:
+  cli-proxy-api:
+    volumes:
+      - ./accounts:/CLIProxyAPI/accounts
+```
+
+Registry updates use a temporary file and atomic rename. A single-file bind mount cannot be replaced and fails with `device or resource busy`.
 
 Example account registry:
 
