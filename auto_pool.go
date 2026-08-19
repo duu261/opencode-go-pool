@@ -55,6 +55,17 @@ var runtimeAutoPool = autoPoolState{blocked: make(map[string]time.Time), held: m
 
 var quotaResetPattern = regexp.MustCompile(`(?i)(?:resets?|try\s+again)\s+in\s+(\d+)\s*(min(?:ute)?s?|h(?:our)?s?|d(?:ay)?s?)`)
 
+var accountExpiryLocation = time.FixedZone("Asia/Ho_Chi_Minh", 7*60*60)
+
+func accountExpired(account accounts.Account, now time.Time) bool {
+	date, err := time.ParseInLocation("2006-01-02", strings.TrimSpace(account.ExpiresAt), accountExpiryLocation)
+	if err != nil {
+		return false
+	}
+	// ponytail: date-only expiry means usable through that Vietnam calendar day.
+	return !now.Before(date.AddDate(0, 0, 1))
+}
+
 func eligibleAutoPoolCandidates(candidates []schedulerCandidate, blocked map[string]time.Time, held map[string]bool, now time.Time) []schedulerCandidate {
 	eligible := make([]schedulerCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
@@ -159,6 +170,20 @@ func (s *autoPoolState) blockedSnapshot() map[string]time.Time {
 	return result
 }
 
+func (s *autoPoolState) clear(authID string) bool {
+	authID = strings.TrimSpace(authID)
+	if s == nil || authID == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.blocked[authID]; !exists {
+		return false
+	}
+	delete(s.blocked, authID)
+	return true
+}
+
 func (s *autoPoolState) state(authID string, now time.Time) (string, time.Time) {
 	s.mu.RLock()
 	resetAt, exists := s.blocked[authID]
@@ -200,7 +225,7 @@ func (s *autoPoolState) heldSnapshot(config pluginConfig, now time.Time) (map[st
 	}
 	held := make(map[string]bool)
 	for _, account := range registry {
-		if !account.ManualHold {
+		if !account.ManualHold && !account.ReferralOnly && !accountExpired(account, now) {
 			continue
 		}
 		if credential, exists := credentialByKey[account.APIKey]; exists && credential.AuthID != "" {
@@ -263,12 +288,12 @@ func handleSchedulerPick(raw []byte) ([]byte, error) {
 	blocked := runtimeAutoPool.blockedSnapshot()
 	held, holdsAvailable := runtimeAutoPool.heldSnapshot(config, now)
 	if !holdsAvailable {
-		return okEnvelope(schedulerPickResponse{Handled: false})
+		return errorEnvelope("opencode_pool_state_unavailable", "OpenCode account state could not be loaded safely"), nil
 	}
 	eligible := eligibleAutoPoolCandidates(candidates, blocked, held, now)
 	candidate, ok := selectAutoPoolCandidate(runtimeAutoPool.nextCandidateOrder(eligible), nil, nil, now)
 	if !ok {
-		return okEnvelope(schedulerPickResponse{Handled: false})
+		return errorEnvelope("no_eligible_opencode_credentials", "all OpenCode credentials are cooling, held, expired, or referral-only"), nil
 	}
 	return okEnvelope(schedulerPickResponse{AuthID: candidate.ID, Handled: true})
 }

@@ -144,6 +144,13 @@ CLIProxyAPI 始终是路由状态的唯一真实来源。新账号保存后默�
 5. 账号即使有配额也不能路由时，使用 **Manual hold**。
 6. 删除或退役账号前先 Disable。
 
+### 单月账号策略
+
+- Monthly 配额耗尽时不删除账号，保留注册表记录、Referral URL、邀请关系和积分历史。
+- 如果领取邀请奖励后在过期前恢复了上游用量，点击 **Resume routing**。该按钮只清除插件 cooldown 内存；下一次请求会重新验证 key，如果仍返回配额错误，则再次进入 cooling。
+- 如果不再恢复该账号，先 Disable，再选择 **Referral only**。此状态会跨重启保留，保存账号元数据，并且在恢复账号前不能重新 Enable。
+- `expires_at` 到期后，scheduler 会自动将账号视为 referral-only。如果所有 OpenCode 凭据都处于 cooling、hold、expired 或 referral-only，插件会拒绝调度，而不是把失效凭据交回原生路由。
+
 ### 批量导入
 
 点击 **Bulk add**，粘贴每行一个账号的 TSV。表头可选：

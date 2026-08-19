@@ -32,6 +32,17 @@ func TestSelectAutoPoolCandidateDelegatesWhenAllBlocked(t *testing.T) {
 	}
 }
 
+func TestAutoPoolStateClearRemovesCooldown(t *testing.T) {
+	now := time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC)
+	state := autoPoolState{blocked: map[string]time.Time{"auth-1": now.Add(time.Hour)}}
+	if !state.clear("auth-1") {
+		t.Fatal("clear() = false, want true")
+	}
+	if got, _ := state.state("auth-1", now); got != "ready" {
+		t.Fatalf("state after clear = %q, want ready", got)
+	}
+}
+
 func TestParseQuotaResetUnderstandsFiveHourAndWeeklyMessages(t *testing.T) {
 	now := time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC)
 	for _, test := range []struct {

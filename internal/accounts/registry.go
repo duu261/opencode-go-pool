@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -35,6 +36,7 @@ type Account struct {
 	ReferralCredits  int    `json:"referral_credits,omitempty" yaml:"referral_credits,omitempty"`
 	ReferralAwarded  bool   `json:"referral_awarded,omitempty" yaml:"referral_awarded,omitempty"`
 	ManualHold       bool   `json:"manual_hold,omitempty" yaml:"manual_hold,omitempty"`
+	ReferralOnly     bool   `json:"referral_only,omitempty" yaml:"referral_only,omitempty"`
 	ExpiresAt        string `json:"expires_at,omitempty" yaml:"expires_at,omitempty"`
 	Notes            string `json:"notes,omitempty" yaml:"notes,omitempty"`
 }
@@ -398,6 +400,12 @@ func normalize(accounts []Account) ([]Account, error) {
 		account.ReferralURL = strings.TrimSpace(account.ReferralURL)
 		account.ReferredByAPIKey = strings.TrimSpace(account.ReferredByAPIKey)
 		account.ExpiresAt = strings.TrimSpace(account.ExpiresAt)
+		if account.ExpiresAt != "" {
+			date, err := time.Parse("2006-01-02", account.ExpiresAt)
+			if err != nil || date.Format("2006-01-02") != account.ExpiresAt {
+				return nil, fmt.Errorf("account %d expires_at must be YYYY-MM-DD", index+1)
+			}
+		}
 		account.Notes = strings.TrimSpace(account.Notes)
 		result = append(result, account)
 	}

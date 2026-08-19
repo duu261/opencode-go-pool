@@ -62,6 +62,8 @@ const (
 	fullQuotaRoutePath = "/v0/management" + quotaRoutePath
 	accountsRoutePath  = "/plugins/" + pluginID + "/accounts"
 	fullAccountsPath   = "/v0/management" + accountsRoutePath
+	resumeRoutePath    = "/plugins/" + pluginID + "/resume"
+	fullResumePath     = "/v0/management" + resumeRoutePath
 )
 
 type envelope struct {
@@ -190,7 +192,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 			SchemaVersion: 3,
 			Metadata: metadata{
 				Name:             pluginName,
-				Version:          "0.3.0",
+				Version:          "0.4.0",
 				Author:           "Duu",
 				GitHubRepository: "https://github.com/duu261/opencode-go-pool",
 				ConfigFields: []configField{
@@ -210,6 +212,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 				{Method: http.MethodGet, Path: quotaRoutePath, Description: "Authenticated OpenCode Go quota pool data."},
 				{Method: http.MethodGet, Path: accountsRoutePath, Description: "Authenticated OpenCode Go account registry and quota data."},
 				{Method: http.MethodPut, Path: accountsRoutePath, Description: "Replace the OpenCode Go account registry."},
+				{Method: http.MethodPost, Path: resumeRoutePath, Description: "Clear one account's temporary auto-cooldown."},
 			},
 			Resources: []managementResource{{
 				Path:        resourcePath,
@@ -240,11 +243,54 @@ func handleManagement(raw []byte) ([]byte, error) {
 		return handleQuotaManagement()
 	case fullAccountsPath, accountsRoutePath:
 		return handleAccountsManagement(request)
+	case fullResumePath, resumeRoutePath:
+		return handleResumeCooldown(request)
 	case "", resourcePath, fullResourcePath:
 		return okEnvelope(htmlResponse(http.StatusOK, quotaPageHTML))
 	default:
 		return okEnvelope(htmlResponse(http.StatusNotFound, "<h1>Not found</h1>"))
 	}
+}
+
+type resumeCooldownRequest struct {
+	KeyID string `json:"key_id"`
+}
+
+func handleResumeCooldown(request managementRequest) ([]byte, error) {
+	if request.Method != "" && request.Method != http.MethodPost {
+		return okEnvelope(jsonResponse(http.StatusMethodNotAllowed, map[string]string{"error": "method_not_allowed"}))
+	}
+	var payload resumeCooldownRequest
+	if err := json.Unmarshal(request.Body, &payload); err != nil || strings.TrimSpace(payload.KeyID) == "" {
+		return okEnvelope(jsonResponse(http.StatusBadRequest, map[string]string{"error": "missing_key_id", "message": "Account key ID is required."}))
+	}
+	config := currentPluginConfig()
+	credentials, err := cliproxyconfig.Discover(config.ConfigPath, config.ProviderNames)
+	if err != nil {
+		return okEnvelope(jsonResponse(http.StatusInternalServerError, map[string]string{"error": "credential_discovery_failed", "message": "Unable to read CLIProxyAPI credential configuration."}))
+	}
+	registry, err := accounts.Load(config.AccountsPath)
+	if err != nil {
+		return okEnvelope(jsonResponse(http.StatusInternalServerError, map[string]string{"error": "account_registry_load_failed", "message": "Unable to read the account registry."}))
+	}
+	accountByKey := make(map[string]accounts.Account, len(registry))
+	for _, account := range registry {
+		accountByKey[account.APIKey] = account
+	}
+	for _, credential := range credentials {
+		if credential.KeyID != payload.KeyID {
+			continue
+		}
+		if credential.AuthID == "" {
+			break
+		}
+		if account, exists := accountByKey[credential.APIKey]; exists && (account.ReferralOnly || accountExpired(account, time.Now())) {
+			return okEnvelope(jsonResponse(http.StatusConflict, map[string]string{"error": "account_not_routable", "message": "Restore this referral-only account before resuming routing."}))
+		}
+		cleared := runtimeAutoPool.clear(credential.AuthID)
+		return okEnvelope(jsonResponse(http.StatusOK, map[string]any{"status": "ready", "key_id": payload.KeyID, "cleared": cleared}))
+	}
+	return okEnvelope(jsonResponse(http.StatusNotFound, map[string]string{"error": "account_not_found", "message": "No matching OpenCode credential was found."}))
 }
 
 type accountView struct {
@@ -358,6 +404,15 @@ func handleAccountsManagement(request managementRequest) ([]byte, error) {
 		for _, credential := range credentials {
 			if credential.Enabled {
 				enabledKeys[credential.APIKey] = struct{}{}
+			}
+		}
+		for _, account := range *payload.Accounts {
+			if account.ReferralOnly {
+				if _, enabled := enabledKeys[account.APIKey]; enabled {
+					return okEnvelope(jsonResponse(http.StatusConflict, map[string]string{
+						"error": "active_referral_only", "message": "Disable an active account before marking it referral-only.",
+					}))
+				}
 			}
 		}
 		for _, account := range currentAccounts {
@@ -477,6 +532,10 @@ func accountSnapshotResponse(config pluginConfig) ([]byte, error) {
 			} else if !resetAt.IsZero() {
 				view.AutoResetAt = &resetAt
 			}
+		}
+		if view.ReferralOnly || accountExpired(account, time.Now()) {
+			view.AutoState = "referral_only"
+			view.AutoResetAt = nil
 		}
 		if result, ok := resultByKeyID[view.KeyID]; ok {
 			view.Status = result.Status

@@ -135,6 +135,13 @@ Typical operator flow:
 5. Use **Manual hold** when an account must not route even if its quota is available.
 6. Disable before deleting or retiring an account.
 
+### One-month account policy
+
+- A monthly limit hit does not delete the account. Keep the registry row, referral URL, referral relationship, and credit history.
+- If referral credit restores upstream usage before expiry, click **Resume routing**. The button clears only plugin cooldown memory; the next request re-tests the key and a new quota error cools it again.
+- If the account will not be revived, Disable it first and select **Referral only**. This state persists across restarts, keeps account metadata, and cannot be enabled until restored.
+- When `expires_at` passes, the scheduler treats the account as referral-only automatically. If every OpenCode credential is cooling, held, expired, or referral-only, the plugin rejects scheduling instead of delegating dead credentials to native routing.
+
 ### Bulk import
 
 Click **Bulk add** and paste one tab-separated row per account. Header row is optional:

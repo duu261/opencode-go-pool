@@ -18,6 +18,7 @@ func TestSaveAndLoadRoundTripPlaintextAccountRegistry(t *testing.T) {
 		Password:         "disposable-password",
 		ReferralURL:      "https://opencode.ai/go?ref=ABC123",
 		ReferredByAPIKey: "parent-secret",
+		ReferralOnly:     true,
 		ExpiresAt:        "2026-09-17",
 		Notes:            "Disposable account",
 	}}
@@ -66,6 +67,15 @@ func TestLoadEmptyRegistryReturnsEmpty(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("Load() = %#v, want empty", got)
+	}
+}
+
+func TestSaveRejectsInvalidExpiryDate(t *testing.T) {
+	t.Parallel()
+
+	err := Save(filepath.Join(t.TempDir(), "accounts.yaml"), []Account{{APIKey: "key", ExpiresAt: "never"}})
+	if err == nil {
+		t.Fatal("Save() error = nil, want invalid expires_at rejection")
 	}
 }
 
