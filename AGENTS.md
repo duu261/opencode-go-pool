@@ -73,3 +73,13 @@ nm -D dist/opencode-go-quota.so | grep -E 'cliproxy_plugin_init|cliproxyPluginCa
 - CLIProxyAPI resource routes are unauthenticated. Keep `/status` data-free; fetch runtime data only from authenticated Management API routes.
 - `host.auth.list` and `host.auth.get_runtime` omit runtime API keys; `host.auth.get` requires a physical auth file. OpenAI-compatible key discovery therefore reads the protected CLIProxy config path.
 - Do not edit `/home/duu/.hermes/hermes-agent/` for this plugin. CLIProxyAPI compatibility belongs in this repository.
+
+## Plugin Store release contract
+
+- Plugin ID and release basename are `opencode-go-quota`; do not rename them without a migration plan.
+- The public repository is `https://github.com/duu261/opencode-go-pool`.
+- Store releases use a non-draft tag such as `v0.4.0`; the tag version omits the leading `v` in asset names.
+- Each supported platform release contains `<id>_<version>_<goos>_<goarch>.zip` and `checksums.txt`; the zip contains exactly the target `.so`, `.dylib`, or `.dll` at its root.
+- The official Store repository contains only registry metadata. Submit a PR changing `registry.json`; keep binaries and checksums in this repository's GitHub Release.
+- Keep the registry `version` equal to the latest release version while CLIProxyAPI's latest-release installer still selects assets using registry metadata.
+- Verify release assets and SHA-256 checksums before opening the registry PR.
