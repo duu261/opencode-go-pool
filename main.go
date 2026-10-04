@@ -192,7 +192,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 			SchemaVersion: 3,
 			Metadata: metadata{
 				Name:             pluginName,
-				Version:          "0.4.0",
+				Version:          "0.4.1",
 				Author:           "Duu",
 				GitHubRepository: "https://github.com/duu261/opencode-go-pool",
 				ConfigFields: []configField{

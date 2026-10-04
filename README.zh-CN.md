@@ -30,7 +30,7 @@
 
 - Go 1.24 或更高版本。
 - CGO 和 C 编译器。
-- CLIProxyAPI v7.2.130，或兼容 plugin ABI v1 的构建版本。
+- CLIProxyAPI v7.2.130，或兼容 plugin ABI v1 的构建版本。同时支持 CLIProxyAPI v8 配置（`config-version: 8`，`api-keys.openai-compatibility[].keys`）和旧版 `openai-compatibility[].api-key-entries` 布局。
 
 ## 验证
 

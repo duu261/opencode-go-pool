@@ -32,12 +32,23 @@ type Provider struct {
 
 type proxyConfig struct {
 	OpenAICompatibility []compatProvider `yaml:"openai-compatibility"`
+	// APIKeys is a client-key list in the legacy layout and an upstream
+	// provider map in the CLIProxyAPI v8 layout.
+	APIKeys yaml.Node `yaml:"api-keys"`
 }
 
 type compatProvider struct {
 	Name          string         `yaml:"name"`
 	BaseURL       string         `yaml:"base-url"`
 	APIKeyEntries []compatAPIKey `yaml:"api-key-entries"`
+}
+
+// v8CompatGroup is one api-keys.openai-compatibility entry in the
+// CLIProxyAPI v8 layout; its keys list replaces api-key-entries.
+type v8CompatGroup struct {
+	Name    string         `yaml:"name"`
+	BaseURL string         `yaml:"base-url"`
+	Keys    []compatAPIKey `yaml:"keys"`
 }
 
 type compatAPIKey struct {
@@ -113,7 +124,46 @@ func loadConfig(configPath string) (proxyConfig, error) {
 	if err := decoder.Decode(&config); err != nil {
 		return proxyConfig{}, fmt.Errorf("decode CLIProxy config: %w", err)
 	}
+	groups, err := v8CompatGroups(&config.APIKeys)
+	if err != nil {
+		return proxyConfig{}, fmt.Errorf("decode CLIProxy config: %w", err)
+	}
+	// CLIProxyAPI v8 lets api-keys.openai-compatibility replace the legacy
+	// top-level list whenever the v8 path is present.
+	if groups != nil {
+		config.OpenAICompatibility = make([]compatProvider, 0, len(groups))
+		for _, group := range groups {
+			config.OpenAICompatibility = append(config.OpenAICompatibility, compatProvider{
+				Name:          group.Name,
+				BaseURL:       group.BaseURL,
+				APIKeyEntries: group.Keys,
+			})
+		}
+	}
 	return config, nil
+}
+
+// v8CompatGroups returns nil when the v8 openai-compatibility path is absent,
+// and a non-nil slice (possibly empty) when it is present.
+func v8CompatGroups(apiKeys *yaml.Node) ([]v8CompatGroup, error) {
+	if apiKeys.Kind != yaml.MappingNode {
+		return nil, nil
+	}
+	for index := 0; index+1 < len(apiKeys.Content); index += 2 {
+		if apiKeys.Content[index].Value != "openai-compatibility" {
+			continue
+		}
+		value := apiKeys.Content[index+1]
+		if value.Kind == yaml.ScalarNode && value.Tag == "!!null" {
+			return []v8CompatGroup{}, nil
+		}
+		groups := make([]v8CompatGroup, 0)
+		if err := value.Decode(&groups); err != nil {
+			return nil, fmt.Errorf("api-keys.openai-compatibility: %w", err)
+		}
+		return groups, nil
+	}
+	return nil, nil
 }
 
 func allowedProviderNames(providerNames []string) map[string]struct{} {

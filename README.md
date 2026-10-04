@@ -25,7 +25,7 @@ Account registry, quota dashboard, and operator pool controls for CLIProxyAPI. I
 
 - Go 1.24 or newer.
 - CGO and a C compiler.
-- CLIProxyAPI v7.2.130 or a compatible plugin ABI v1 build.
+- CLIProxyAPI v7.2.130 or a compatible plugin ABI v1 build. CLIProxyAPI v8 configs (`config-version: 8`, `api-keys.openai-compatibility[].keys`) are read as well as the legacy `openai-compatibility[].api-key-entries` layout.
 
 ## Verify
 
